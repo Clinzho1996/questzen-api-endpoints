@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-	apiVersion: "2023-10-16", // Updated API version
+	apiVersion: "2023-10-16",
 });
 
 // Add CORS headers function
@@ -41,6 +41,7 @@ export async function POST(request: NextRequest) {
 
 		console.log("Using price ID:", priceId);
 
+		// ⚡ FIX: Remove customer_creation for subscription mode
 		const session = await stripe.checkout.sessions.create({
 			payment_method_types: ["card"],
 			line_items: [{ price: priceId, quantity: 1 }],
@@ -53,7 +54,13 @@ export async function POST(request: NextRequest) {
 			}/upgrade`,
 			client_reference_id: userId,
 			metadata: { userId: userId, planType: plan },
-			customer_creation: "always", // Important for subscriptions
+			// ⚡ CRITICAL: Add subscription_data for customer creation
+			subscription_data: {
+				metadata: {
+					userId: userId,
+					planType: plan,
+				},
+			},
 		});
 
 		console.log("Stripe session created:", {
@@ -62,10 +69,10 @@ export async function POST(request: NextRequest) {
 			customer: session.customer,
 		});
 
-		// ⚡ CRITICAL FIX: Return BOTH sessionId AND url
+		// Return session URL
 		const response = NextResponse.json({
 			sessionId: session.id,
-			url: session.url, // This is what you're missing!
+			url: session.url,
 			customerId: session.customer,
 		});
 
@@ -73,7 +80,10 @@ export async function POST(request: NextRequest) {
 	} catch (error: any) {
 		console.error("Checkout error:", error);
 		const response = NextResponse.json(
-			{ error: error.message || "Failed to create checkout session" },
+			{
+				error: error.message || "Failed to create checkout session",
+				details: error.type, // Add error type for debugging
+			},
 			{ status: 500 }
 		);
 		return setCORSHeaders(response);
