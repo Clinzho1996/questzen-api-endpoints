@@ -31,7 +31,16 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		// Verify password
+		// 🔥 CRITICAL FIX: Check if password exists
+		if (!user.password) {
+			console.error("User found but password field is missing:", user.email);
+			return NextResponse.json(
+				{ error: { message: "Invalid credentials" } },
+				{ status: 400 }
+			);
+		}
+
+		// Verify password - ensure both arguments are strings
 		const isMatch = await bcrypt.compare(password, user.password);
 		if (!isMatch) {
 			return NextResponse.json(
@@ -64,8 +73,10 @@ export async function POST(request: NextRequest) {
 				id: user._id!.toString(),
 				email: user.email,
 				displayName: user.displayName,
-				photoURL: user.photoURL,
-				subscriptionTier: user.subscriptionTier || "free", // Make sure this is included
+				photoURL:
+					user.photoURL ||
+					`https://api.dicebear.com/7.x/avataaars/svg?seed=${user._id}`,
+				subscriptionTier: user.subscriptionTier || "free",
 				streak: updatedUser.streak,
 			},
 		});
