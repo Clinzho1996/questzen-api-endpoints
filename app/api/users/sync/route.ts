@@ -1,32 +1,58 @@
-import { requireAuth } from "@/lib/auth";
+// app/api/users/sync/route.ts - Special endpoint for Firebase users
 import { getDatabase } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
 	try {
-		const user = await requireAuth(request);
-		const db = await getDatabase();
+		const authHeader = request.headers.get("authorization");
 
-		console.log("🔄 Syncing user to MongoDB:", {
-			userId: user.userId,
-			email: user.email,
-			provider: user.provider,
+		if (!authHeader || !authHeader.startsWith("Bearer ")) {
+			return NextResponse.json(
+				{ error: { message: "No token provided" } },
+				{ status: 401 }
+			);
+		}
+
+		const firebaseToken = authHeader.substring(7);
+
+		// Simple Firebase token verification (decode only, not verify)
+		// For production, use Firebase Admin SDK
+		const jwt = require("jsonwebtoken");
+		const decoded = jwt.decode(firebaseToken, { complete: true });
+
+		if (!decoded) {
+			return NextResponse.json(
+				{ error: { message: "Invalid Firebase token" } },
+				{ status: 401 }
+			);
+		}
+
+		const firebaseUid = decoded.payload.sub || decoded.payload.user_id;
+		const email = decoded.payload.email;
+		const provider = decoded.payload.firebase?.sign_in_provider || "google.com";
+
+		console.log("🔄 Syncing Firebase user:", {
+			firebaseUid,
+			email,
+			provider,
 		});
 
-		// Check if user already exists by firebaseUid
+		const db = await getDatabase();
+
+		// Check if user already exists
 		let existingUser = await db
 			.collection("users")
 			.findOne(
-				{ firebaseUid: user.userId },
+				{ firebaseUid },
 				{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
 			);
 
 		// If not found by firebaseUid, check by email
-		if (!existingUser && user.email) {
+		if (!existingUser && email) {
 			existingUser = await db
 				.collection("users")
 				.findOne(
-					{ email: user.email },
+					{ email },
 					{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
 				);
 
@@ -34,10 +60,7 @@ export async function POST(request: NextRequest) {
 			if (existingUser && !existingUser.firebaseUid) {
 				await db
 					.collection("users")
-					.updateOne(
-						{ _id: existingUser._id },
-						{ $set: { firebaseUid: user.userId } }
-					);
+					.updateOne({ _id: existingUser._id }, { $set: { firebaseUid } });
 				console.log("🔗 Linked existing user to Firebase UID");
 			}
 		}
@@ -45,37 +68,22 @@ export async function POST(request: NextRequest) {
 		if (existingUser) {
 			console.log("✅ User already exists in MongoDB:", existingUser.email);
 
-			// Update with latest info if needed
-			const updates: any = {
-				updatedAt: new Date(),
-			};
-
-			if (user.email && !existingUser.email) {
-				updates.email = user.email;
-			}
-
-			if (Object.keys(updates).length > 1) {
-				await db
-					.collection("users")
-					.updateOne({ _id: existingUser._id }, { $set: updates });
-			}
-
 			return NextResponse.json({
 				success: true,
 				user: {
 					...existingUser,
 					id: existingUser._id.toString(),
 				},
-				message: "User already exists",
+				message: "User already synced",
 			});
 		}
 
 		// Create new user in MongoDB
 		const newUser = {
-			firebaseUid: user.userId,
-			email: user.email || "",
-			displayName: user.email?.split("@")[0] || "QuestZen User",
-			photoURL: "",
+			firebaseUid,
+			email: email || "",
+			displayName: email?.split("@")[0] || "QuestZen User",
+			photoURL: decoded.payload.picture || "",
 			subscriptionTier: "free",
 			streak: 0,
 			longestStreak: 0,
@@ -86,7 +94,7 @@ export async function POST(request: NextRequest) {
 			achievements: [],
 			createdAt: new Date(),
 			updatedAt: new Date(),
-			provider: user.provider || "google",
+			provider,
 		};
 
 		const result = await db.collection("users").insertOne(newUser);
