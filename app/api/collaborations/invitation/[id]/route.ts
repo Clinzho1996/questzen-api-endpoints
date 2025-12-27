@@ -4,9 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	context: { params: Promise<{ id: string }> } // Changed: params is a Promise
 ) {
 	try {
+		// AWAIT the params first
+		const params = await context.params; // ← Add this
 		const { id: invitationId } = params;
 
 		if (!invitationId) {
@@ -45,12 +47,12 @@ export async function GET(
 			if (!invitation) {
 				invitation = await db
 					.collection("collaboration_invitations")
-					.findOne({ _id: invitationId } as any); // Type assertion for string
+					.findOne({ _id: invitationId } as any);
 
 				if (!invitation) {
 					invitation = await db
 						.collection("pending_invitations")
-						.findOne({ _id: invitationId } as any); // Type assertion for string
+						.findOne({ _id: invitationId } as any);
 				}
 			}
 
@@ -151,4 +153,30 @@ export async function GET(
 			{ status: 500 }
 		);
 	}
+}
+
+// Also update OPTIONS handler
+export async function OPTIONS(request: NextRequest) {
+	const origin = request.headers.get("origin") || "http://localhost:5173";
+	const allowedOrigins = [
+		"https://questzenai.devclinton.org",
+		"http://localhost:5173",
+		"http://localhost:3000",
+	];
+
+	const response = new NextResponse(null, { status: 200 });
+
+	if (allowedOrigins.includes(origin)) {
+		response.headers.set("Access-Control-Allow-Origin", origin);
+	}
+	response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+	response.headers.set(
+		"Access-Control-Allow-Headers",
+		"Content-Type, Authorization"
+	);
+	response.headers.set("Access-Control-Allow-Credentials", "true");
+	response.headers.set("Access-Control-Max-Age", "86400");
+	response.headers.set("Cache-Control", "no-store, max-age=0");
+
+	return response;
 }
