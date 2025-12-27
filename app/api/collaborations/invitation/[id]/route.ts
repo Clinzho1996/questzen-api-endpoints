@@ -1,19 +1,25 @@
-// app/api/collaborations/invitation/[id]/route.ts
+// For Next.js 15+ with async params
 import { getDatabase } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
+// Generate static params (optional)
+export async function generateStaticParams() {
+	return []; // Return empty array or actual IDs if you want static generation
+}
+
+// CORRECT for Next.js 15+: Await the params
 export async function GET(
 	request: NextRequest,
-	context: { params: Promise<{ id: string }> }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
 	try {
-		const params = await context.params;
-		const { id: invitationId } = params;
+		// Await the params Promise
+		const resolvedParams = await params;
+		const { id: invitationId } = resolvedParams;
 
-		console.log("🔍 Looking for invitation ID:", invitationId);
-		console.log("🔍 Invitation ID type:", typeof invitationId);
+		console.log("✅ Correctly extracted invitation ID:", invitationId);
 
-		if (!invitationId) {
+		if (!invitationId || invitationId === "undefined") {
 			return NextResponse.json(
 				{ error: { message: "Invitation ID is required" } },
 				{ status: 400 }
@@ -23,99 +29,22 @@ export async function GET(
 		const db = await getDatabase();
 		const now = new Date();
 
-		// DEBUG: Log all invitations to see what's in DB
-		console.log("📊 Checking database for invitations...");
+		console.log("🔍 Looking for invitation ID:", invitationId);
 
-		// Check both collections
-		const allCollabInvites = await db
-			.collection("collaboration_invitations")
-			.find({})
-			.limit(5)
-			.toArray();
-		const allPendingInvites = await db
-			.collection("pending_invitations")
-			.find({})
-			.limit(5)
-			.toArray();
+		// SIMPLE DIRECT QUERY - Since we know it's a string
+		let invitation = await db.collection("collaboration_invitations").findOne({
+			_id: invitationId,
+		} as any);
 
-		console.log(
-			"📁 collaboration_invitations sample:",
-			allCollabInvites.map((i) => ({
-				_id: i._id,
-				_idType: typeof i._id,
-				questId: i.questId,
-				inviteeEmail: i.inviteeEmail,
-				status: i.status,
-			}))
-		);
+		console.log("🔍 Query result:", invitation);
 
-		console.log(
-			"📁 pending_invitations sample:",
-			allPendingInvites.map((i) => ({
-				_id: i._id,
-				_idType: typeof i._id,
-				questId: i.questId,
-				inviteeEmail: i.inviteeEmail,
-				status: i.status,
-			}))
-		);
-
-		// TRY DIFFERENT QUERY APPROACHES
-		let invitation = null;
-
-		// Try with explicit string comparison first
-		console.log("🔄 Trying string comparison query...");
-		const allInvitations = await db
-			.collection("collaboration_invitations")
-			.find({})
-			.toArray();
-
-		// Manually find by string comparison
-		for (const inv of allInvitations) {
-			if (inv._id?.toString() === invitationId) {
-				invitation = inv;
-				console.log("✅ Found by manual string comparison!");
-				break;
-			}
-		}
-
-		// If not found manually, try direct query with string
 		if (!invitation) {
-			console.log("🔄 Trying direct query with string...");
-			// Try as string
-			invitation = await db.collection("collaboration_invitations").findOne({
+			console.log("❌ Not found in collaboration_invitations");
+			invitation = await db.collection("pending_invitations").findOne({
 				_id: invitationId,
 			} as any);
+			console.log("🔍 Pending invitations query result:", invitation);
 		}
-
-		// If still not found, try pending_invitations
-		if (!invitation) {
-			console.log("🔄 Trying pending_invitations...");
-			const allPending = await db
-				.collection("pending_invitations")
-				.find({})
-				.toArray();
-
-			for (const inv of allPending) {
-				if (inv._id?.toString() === invitationId) {
-					invitation = inv;
-					console.log(
-						"✅ Found in pending_invitations by manual string comparison!"
-					);
-					break;
-				}
-			}
-
-			if (!invitation) {
-				invitation = await db.collection("pending_invitations").findOne({
-					_id: invitationId,
-				} as any);
-			}
-		}
-
-		console.log("🔎 Found invitation:", invitation);
-		console.log("🔎 Invitation _id value:", invitation?._id);
-		console.log("🔎 Invitation _id type:", typeof invitation?._id);
 
 		if (!invitation) {
 			return NextResponse.json(
@@ -127,6 +56,12 @@ export async function GET(
 				{ status: 404 }
 			);
 		}
+
+		console.log("✅ Found invitation:", {
+			id: invitation._id,
+			questId: invitation.questId,
+			status: invitation.status,
+		});
 
 		// Check if invitation is expired
 		if (invitation.expiresAt && new Date(invitation.expiresAt) < now) {
@@ -150,25 +85,8 @@ export async function GET(
 			);
 		}
 
-		// Check if rejected
-		if (invitation.status === "rejected") {
-			return NextResponse.json(
-				{
-					error: { message: "Invitation was declined" },
-					invitation,
-				},
-				{ status: 410 }
-			);
-		}
-
-		// Get quest details - handle questId format
-		console.log("🔍 Getting quest with ID:", invitation.questId);
-		console.log("🔍 Quest ID type:", typeof invitation.questId);
-
-		let quest = null;
-
-		// Try to find quest with the exact questId
-		quest = await db
+		// Get quest details
+		const quest = await db
 			.collection("goals")
 			.findOne({ _id: invitation.questId } as any, {
 				projection: {
@@ -179,24 +97,6 @@ export async function GET(
 				},
 			});
 
-		// If not found, try to find by title or other field
-		if (!quest && invitation.questTitle) {
-			console.log("🔍 Quest not found by ID, trying by title...");
-			quest = await db.collection("goals").findOne(
-				{ title: invitation.questTitle },
-				{
-					projection: {
-						title: 1,
-						category: 1,
-						description: 1,
-						dueDate: 1,
-					},
-				}
-			);
-		}
-
-		console.log("📋 Quest found:", quest);
-
 		// Get inviter details
 		const inviter = await db
 			.collection("users")
@@ -205,7 +105,7 @@ export async function GET(
 			});
 
 		const responseData = {
-			invitationId,
+			invitationId: invitation._id,
 			questId: invitation.questId,
 			questTitle: quest?.title || invitation.questTitle || "Untitled Quest",
 			questCategory: quest?.category || "General",
@@ -221,11 +121,8 @@ export async function GET(
 			status: invitation.status || "pending",
 			createdAt: invitation.createdAt,
 			expiresAt: invitation.expiresAt,
-			token: invitation.token, // For pending invitations
-			isExistingUser: !!invitation.inviteeId, // True for collaboration_invitations
+			isExistingUser: !!invitation.inviteeId,
 		};
-
-		console.log("✅ Returning invitation data:", responseData);
 
 		const response = NextResponse.json(responseData);
 
@@ -250,4 +147,30 @@ export async function GET(
 			{ status: 500 }
 		);
 	}
+}
+
+// OPTIONS handler
+export async function OPTIONS(request: NextRequest) {
+	const origin = request.headers.get("origin") || "http://localhost:5173";
+	const allowedOrigins = [
+		"https://questzenai.devclinton.org",
+		"http://localhost:5173",
+		"http://localhost:3000",
+	];
+
+	const response = new NextResponse(null, { status: 200 });
+
+	if (allowedOrigins.includes(origin)) {
+		response.headers.set("Access-Control-Allow-Origin", origin);
+	}
+	response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+	response.headers.set(
+		"Access-Control-Allow-Headers",
+		"Content-Type, Authorization"
+	);
+	response.headers.set("Access-Control-Allow-Credentials", "true");
+	response.headers.set("Access-Control-Max-Age", "86400");
+	response.headers.set("Cache-Control", "no-store, max-age=0");
+
+	return response;
 }
