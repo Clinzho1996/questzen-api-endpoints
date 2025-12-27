@@ -8,11 +8,11 @@ if (!process.env.JWT_SECRET) {
 }
 
 export interface AuthUser {
-	userId: string;
+	userId: string; // This could be firebaseUid OR MongoDB _id
 	email: string;
 	subscriptionTier: "free" | "premium";
 	provider: string;
-	firebaseUid?: string; // Make this optional
+	firebaseUid?: string; // Make this explicitly optional
 }
 
 // Helper function to decode JWT without verification
@@ -52,6 +52,7 @@ function decodeJWT(token: string): any {
 }
 
 // lib/auth.ts - Update the Firebase token handling
+// lib/auth.ts - Fix the Firebase token handling
 export async function verifyAuth(
 	request: NextRequest
 ): Promise<AuthUser | null> {
@@ -64,31 +65,25 @@ export async function verifyAuth(
 		const token = authHeader.substring(7);
 
 		console.log("🔑 Token received, length:", token.length);
-		console.log("🔑 First 50 chars:", token.substring(0, 50));
 
-		// Decode the token to see what's in it
+		// Decode the token
 		const decodedPayload = decodeJWT(token);
 
 		if (decodedPayload) {
 			console.log("🔑 Decoded payload keys:", Object.keys(decodedPayload));
-			console.log("🔑 Important claims:", {
-				uid: decodedPayload.uid,
-				sub: decodedPayload.sub, // Firebase UID is often in 'sub'
-				user_id: decodedPayload.user_id,
-				firebase: decodedPayload.firebase,
-				email: decodedPayload.email,
-				email_verified: decodedPayload.email_verified,
-			});
 		}
 
 		// Check if it's a Firebase token
-		// Firebase tokens have either 'firebase' claim OR 'sub' with no 'userId'
-		if (
+		const isFirebaseToken =
 			decodedPayload &&
 			(decodedPayload.firebase ||
-				(decodedPayload.sub && !decodedPayload.userId))
-		) {
-			// Get the actual Firebase UID
+				decodedPayload.aud === process.env.FIREBASE_PROJECT_ID ||
+				(decodedPayload.iss && decodedPayload.iss.includes("google.com")));
+
+		if (isFirebaseToken) {
+			console.log("🔑 Detected Firebase token");
+
+			// Get the Firebase UID
 			const firebaseUid =
 				decodedPayload.uid || decodedPayload.sub || decodedPayload.user_id;
 
@@ -97,7 +92,8 @@ export async function verifyAuth(
 				return null;
 			}
 
-			console.log("🔑 Detected Firebase token with UID:", firebaseUid);
+			console.log("🔥 Firebase UID from token:", firebaseUid);
+			console.log("📧 Email from token:", decodedPayload.email);
 
 			// Get user from MongoDB by firebaseUid
 			const db = await getDatabase();
@@ -106,7 +102,7 @@ export async function verifyAuth(
 			});
 
 			if (!user) {
-				// Try by email (for Google OAuth users)
+				// Try by email
 				if (decodedPayload.email) {
 					const userByEmail = await db.collection("users").findOne({
 						email: decodedPayload.email.toLowerCase().trim(),
@@ -140,7 +136,7 @@ export async function verifyAuth(
 							decodedPayload.name ||
 							decodedPayload.email?.split("@")[0] ||
 							"QuestZen User",
-						photoURL: decodedPayload.picture || decodedPayload.avatar || "",
+						photoURL: decodedPayload.picture || "",
 						subscriptionTier: "free",
 						streak: 0,
 						longestStreak: 0,
@@ -148,9 +144,6 @@ export async function verifyAuth(
 						level: 1,
 						xp: 0,
 						achievements: [],
-						authProviders: decodedPayload.firebase?.sign_in_provider
-							? [decodedPayload.firebase.sign_in_provider.replace(".com", "")]
-							: ["firebase"],
 						createdAt: new Date(),
 						updatedAt: new Date(),
 					};
@@ -168,12 +161,13 @@ export async function verifyAuth(
 				console.log("✅ Found existing user with matching firebaseUid");
 			}
 
+			// IMPORTANT: Return the actual Firebase UID as userId, not MongoDB _id
 			return {
-				userId: user._id.toString(),
+				userId: firebaseUid, // This should be the Firebase UID
 				email: user.email,
 				subscriptionTier: user.subscriptionTier || "free",
 				provider: "firebase",
-				firebaseUid: firebaseUid,
+				firebaseUid: firebaseUid, // Also include separately
 			};
 		}
 
@@ -198,7 +192,7 @@ export async function verifyAuth(
 			console.log("✅ Custom JWT verified, user found:", user.email);
 
 			return {
-				userId: user._id.toString(),
+				userId: user._id.toString(), // MongoDB _id for custom JWT
 				email: user.email,
 				subscriptionTier: user.subscriptionTier || "free",
 				provider: "custom-jwt",
