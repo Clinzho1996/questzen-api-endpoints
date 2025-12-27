@@ -1,4 +1,4 @@
-// app/api/goals/route.ts
+// app/api/goals/route.ts - GET method
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -14,48 +14,16 @@ export async function GET(request: NextRequest) {
 			email: user.email,
 		});
 
-		// Get current user info - try multiple lookup methods
-		let currentUser = null;
+		// Get or create user
+		let currentUser = await db
+			.collection("users")
+			.findOne(
+				{ firebaseUid: user.userId },
+				{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
+			);
 
-		// Method 1: Try firebaseUid
-		if (user.userId) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ firebaseUid: user.userId },
-					{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
-				);
-		}
-
-		// Method 2: Try by email
-		if (!currentUser && user.email) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ email: user.email.toLowerCase().trim() },
-					{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
-				);
-		}
-
-		// Method 3: Try by _id if it looks like ObjectId
-		if (!currentUser && user.userId && user.userId.length === 24) {
-			try {
-				const objectId = new ObjectId(user.userId);
-				currentUser = await db
-					.collection("users")
-					.findOne(
-						{ _id: objectId },
-						{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
-					);
-			} catch {
-				// ignore invalid ObjectId
-			}
-		}
-
-		// Method 4: Auto-create user if not found (for Firebase-authenticated users)
 		if (!currentUser) {
-			console.log("🔄 User not found in MongoDB, creating new user...");
-
+			console.log("🔄 Creating new user...");
 			const newUser = {
 				firebaseUid: user.userId,
 				email: user.email || "",
@@ -78,74 +46,70 @@ export async function GET(request: NextRequest) {
 				firebaseUid: user.userId,
 				email: user.email || "",
 			};
-
-			console.log("✅ Created new user:", currentUser);
 		}
 
-		console.log("✅ Found/created user:", {
-			_id: currentUser._id,
+		const userIdString = currentUser.firebaseUid || currentUser._id.toString();
+		const userIdObjectId = currentUser._id;
+
+		console.log("👤 Current user in MongoDB:", {
+			_id: currentUser._id.toString(),
 			firebaseUid: currentUser.firebaseUid,
 			email: currentUser.email,
 		});
 
-		const userId = currentUser.firebaseUid || currentUser._id.toString();
-		const userIdObjectId = currentUser._id;
+		// DEBUG: Check what goals exist in the database
+		const allGoalsCount = await db.collection("goals").countDocuments();
+		console.log(`📊 Total goals in database: ${allGoalsCount}`);
 
-		console.log("🔍 Fetching goals for user IDs:", {
-			stringId: userId,
-			objectId: userIdObjectId,
-		});
-
-		// DEBUG: Log all goals to see what's in the database
-		const allGoals = await db.collection("goals").find({}).limit(5).toArray();
+		// Get a sample of goals to debug
+		const sampleGoals = await db
+			.collection("goals")
+			.find({})
+			.limit(5)
+			.toArray();
 		console.log(
-			"📁 Sample goals in database:",
-			allGoals.map((g) => ({
-				id: g._id?.toString?.(),
+			"📁 Sample goals:",
+			sampleGoals.map((g) => ({
+				_id: g._id?.toString?.(),
+				title: g.title,
 				userId: g.userId,
 				userIdType: typeof g.userId,
-				title: g.title,
+				isObjectId: g.userId instanceof ObjectId,
 				collaborators: g.collaborators?.map((c: any) => c.userId),
 			}))
 		);
 
-		// Build query for goals
+		// Build the query - FIXED: Only use conditions that actually exist
 		const queryConditions: any[] = [];
 
-		// Check if userIdObjectId is valid ObjectId
+		// Condition 1: User is the owner (by ObjectId)
 		if (userIdObjectId) {
 			queryConditions.push({ userId: userIdObjectId });
-
-			// Also check if userId is stored as ObjectId string
-			try {
-				if (ObjectId.isValid(userId)) {
-					queryConditions.push({ userId: new ObjectId(userId) });
-				}
-			} catch (error) {
-				console.log("❌ userId is not a valid ObjectId:", userId);
-			}
 		}
 
-		// Check string userId
-		queryConditions.push({ userId: userId });
+		// Condition 2: User is the owner (by string)
+		queryConditions.push({ userId: userIdString });
 
-		// Check collaborators
-		queryConditions.push({ "collaborators.userId": userId });
-		if (userIdObjectId) {
-			queryConditions.push({
-				"collaborators.userId": userIdObjectId.toString(),
-			});
-		}
+		// Condition 3: User is a collaborator
+		queryConditions.push({
+			"collaborators.userId": {
+				$in: [userIdString, userIdObjectId?.toString()].filter(Boolean),
+			},
+		});
 
-		// Check accessibleTo
-		queryConditions.push({ accessibleTo: userId });
-		if (userIdObjectId) {
-			queryConditions.push({ accessibleTo: userIdObjectId.toString() });
-		}
+		// Condition 4: User has access via accessibleTo
+		queryConditions.push({
+			accessibleTo: {
+				$in: [userIdString, userIdObjectId?.toString()].filter(Boolean),
+			},
+		});
 
-		console.log("🔍 Query conditions:", queryConditions);
+		console.log(
+			"🔍 Query conditions:",
+			JSON.stringify(queryConditions, null, 2)
+		);
 
-		// Fetch goals
+		// Execute query
 		const goals = await db
 			.collection("goals")
 			.find({
@@ -154,63 +118,122 @@ export async function GET(request: NextRequest) {
 			.sort({ createdAt: -1 })
 			.toArray();
 
-		console.log(`✅ Found ${goals.length} goals for user`);
+		console.log(`✅ Found ${goals.length} goals matching query`);
 
 		// Transform goals
 		const transformedGoals = goals.map((goal) => {
 			// Determine user's role
 			let isOwner = false;
 
-			// Check ownership by comparing IDs
+			// Check if user is owner
 			if (goal.userId) {
-				if (typeof goal.userId === "object" && userIdObjectId) {
-					// userId is ObjectId
-					isOwner = goal.userId.toString() === userIdObjectId.toString();
+				if (goal.userId instanceof ObjectId) {
+					isOwner = goal.userId.equals(userIdObjectId);
 				} else if (typeof goal.userId === "string") {
-					// userId is string
-					isOwner = goal.userId === userId;
+					isOwner =
+						goal.userId === userIdString ||
+						goal.userId === userIdObjectId?.toString();
 				}
 			}
 
-			const role = isOwner ? "owner" : "collaborator";
+			// Check if user is collaborator (if not owner)
+			let isCollaborator = false;
+			if (!isOwner && goal.collaborators) {
+				isCollaborator = goal.collaborators.some(
+					(collab: any) =>
+						collab.userId === userIdString ||
+						collab.userId === userIdObjectId?.toString()
+				);
+			}
+
+			const role = isOwner
+				? "owner"
+				: isCollaborator
+				? "collaborator"
+				: "owner"; // fallback
+			const isCollaborative =
+				goal.isCollaborative ||
+				isCollaborator ||
+				goal.collaborators?.length > 0;
+
+			// Build participants array
+			const participants = [];
+
+			// Add owner first
+			if (goal.userId && !isOwner) {
+				participants.push({
+					id: goal.userId?.toString?.(),
+					name: "Goal Owner",
+					avatar: `https://ui-avatars.com/api/?name=Owner&background=random`,
+				});
+			}
+
+			// Add collaborators
+			if (goal.collaborators) {
+				goal.collaborators.forEach((collab: any) => {
+					if (
+						collab.userId !== userIdString &&
+						collab.userId !== userIdObjectId?.toString()
+					) {
+						participants.push({
+							id: collab.userId,
+							name:
+								collab.displayName ||
+								collab.email?.split("@")[0] ||
+								"Collaborator",
+							avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+								collab.displayName || collab.email || "C"
+							)}&background=random`,
+						});
+					}
+				});
+			}
 
 			return {
 				...goal,
 				id: goal._id.toString(),
 				_id: undefined,
 				role,
-				isCollaborative: goal.isCollaborative || role === "collaborator",
-				// Ensure participants field exists for UI
-				participants:
-					goal.collaborators?.map((collab: any) => ({
-						id: collab.userId,
-						name: collab.displayName || collab.email?.split("@")[0] || "User",
-						avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-							collab.displayName || collab.email || "U"
-						)}&background=random`,
-					})) || [],
+				isCollaborative,
+				participants,
+				// Ensure progress is a number
+				progress:
+					typeof goal.progress === "number"
+						? goal.progress
+						: goal.completed
+						? 100
+						: 0,
+				// Ensure category is one of the allowed values
+				category: goal.category || "Others",
+				// Ensure priority is one of the allowed values
+				priority: goal.priority || "Medium",
 			};
 		});
 
-		console.log(
-			"📤 Returning goals:",
-			transformedGoals.map((g) => ({
-				id: g.id,
-				role: g.role,
-				isCollaborative: g.isCollaborative,
-				participants: g.participants?.length,
-			}))
-		);
+		console.log("📤 Returning transformed goals:", transformedGoals.length);
 
-		return NextResponse.json(transformedGoals);
+		const response = NextResponse.json(transformedGoals);
+
+		// Add CORS headers
+		const origin = request.headers.get("origin") || "";
+		const allowedOrigins = [
+			"https://questzenai.devclinton.org",
+			"http://localhost:5173",
+			"http://localhost:3000",
+		];
+
+		if (allowedOrigins.includes(origin) || origin.includes("localhost")) {
+			response.headers.set("Access-Control-Allow-Origin", origin);
+		}
+		response.headers.set("Access-Control-Allow-Credentials", "true");
+
+		return response;
 	} catch (error: any) {
 		console.error("❌ Get goals error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
-				{
-					error: { message: "Unauthorized" },
-				},
+				{ error: { message: "Unauthorized" } },
 				{ status: 401 }
 			);
 		}
