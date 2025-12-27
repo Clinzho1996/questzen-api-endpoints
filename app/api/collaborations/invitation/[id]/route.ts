@@ -11,6 +11,7 @@ export async function GET(
 		const { id: invitationId } = params;
 
 		console.log("🔍 Looking for invitation ID:", invitationId);
+		console.log("🔍 Invitation ID type:", typeof invitationId);
 
 		if (!invitationId) {
 			return NextResponse.json(
@@ -40,7 +41,8 @@ export async function GET(
 		console.log(
 			"📁 collaboration_invitations sample:",
 			allCollabInvites.map((i) => ({
-				_id: i._id?.toString?.(),
+				_id: i._id,
+				_idType: typeof i._id,
 				questId: i.questId,
 				inviteeEmail: i.inviteeEmail,
 				status: i.status,
@@ -50,36 +52,78 @@ export async function GET(
 		console.log(
 			"📁 pending_invitations sample:",
 			allPendingInvites.map((i) => ({
-				_id: i._id?.toString?.(),
+				_id: i._id,
+				_idType: typeof i._id,
 				questId: i.questId,
 				inviteeEmail: i.inviteeEmail,
 				status: i.status,
 			}))
 		);
 
+		// TRY DIFFERENT QUERY APPROACHES
 		let invitation = null;
 
-		// Since your invitation IDs are UUID strings, we need to look for them as strings
-		// Try collaboration_invitations first
-		invitation = await db.collection("collaboration_invitations").findOne({
-			_id: invitationId as any,
-		});
+		// Try with explicit string comparison first
+		console.log("🔄 Trying string comparison query...");
+		const allInvitations = await db
+			.collection("collaboration_invitations")
+			.find({})
+			.toArray();
 
-		// If not found, try pending_invitations
+		// Manually find by string comparison
+		for (const inv of allInvitations) {
+			if (inv._id?.toString() === invitationId) {
+				invitation = inv;
+				console.log("✅ Found by manual string comparison!");
+				break;
+			}
+		}
+
+		// If not found manually, try direct query with string
 		if (!invitation) {
-			console.log(
-				"Not found in collaboration_invitations, trying pending_invitations..."
-			);
-			invitation = await db.collection("pending_invitations").findOne({
-				_id: invitationId as any,
-			});
+			console.log("🔄 Trying direct query with string...");
+			// Try as string
+			invitation = await db.collection("collaboration_invitations").findOne({
+				_id: invitationId,
+			} as any);
+		}
+
+		// If still not found, try pending_invitations
+		if (!invitation) {
+			console.log("🔄 Trying pending_invitations...");
+			const allPending = await db
+				.collection("pending_invitations")
+				.find({})
+				.toArray();
+
+			for (const inv of allPending) {
+				if (inv._id?.toString() === invitationId) {
+					invitation = inv;
+					console.log(
+						"✅ Found in pending_invitations by manual string comparison!"
+					);
+					break;
+				}
+			}
+
+			if (!invitation) {
+				invitation = await db.collection("pending_invitations").findOne({
+					_id: invitationId,
+				} as any);
+			}
 		}
 
 		console.log("🔎 Found invitation:", invitation);
+		console.log("🔎 Invitation _id value:", invitation?._id);
+		console.log("🔎 Invitation _id type:", typeof invitation?._id);
 
 		if (!invitation) {
 			return NextResponse.json(
-				{ error: { message: "Invitation not found" } },
+				{
+					error: {
+						message: "Invitation not found. Please check the invitation link.",
+					},
+				},
 				{ status: 404 }
 			);
 		}
@@ -117,8 +161,14 @@ export async function GET(
 			);
 		}
 
-		// Get quest details
-		const quest = await db
+		// Get quest details - handle questId format
+		console.log("🔍 Getting quest with ID:", invitation.questId);
+		console.log("🔍 Quest ID type:", typeof invitation.questId);
+
+		let quest = null;
+
+		// Try to find quest with the exact questId
+		quest = await db
 			.collection("goals")
 			.findOne({ _id: invitation.questId } as any, {
 				projection: {
@@ -128,6 +178,22 @@ export async function GET(
 					dueDate: 1,
 				},
 			});
+
+		// If not found, try to find by title or other field
+		if (!quest && invitation.questTitle) {
+			console.log("🔍 Quest not found by ID, trying by title...");
+			quest = await db.collection("goals").findOne(
+				{ title: invitation.questTitle },
+				{
+					projection: {
+						title: 1,
+						category: 1,
+						description: 1,
+						dueDate: 1,
+					},
+				}
+			);
+		}
 
 		console.log("📋 Quest found:", quest);
 
@@ -141,17 +207,22 @@ export async function GET(
 		const responseData = {
 			invitationId,
 			questId: invitation.questId,
-			questTitle: quest?.title || invitation.questTitle,
-			questCategory: quest?.category,
-			questDescription: quest?.description,
-			questDueDate: quest?.dueDate,
+			questTitle: quest?.title || invitation.questTitle || "Untitled Quest",
+			questCategory: quest?.category || "General",
+			questDescription: quest?.description || "",
+			questDueDate: quest?.dueDate
+				? new Date(quest.dueDate).toLocaleDateString()
+				: null,
 			inviterId: invitation.inviterId,
-			inviterName: inviter?.displayName || invitation.inviterName,
+			inviterName:
+				inviter?.displayName || invitation.inviterName || "QuestZen User",
 			inviterEmail: invitation.inviterEmail,
 			inviteeEmail: invitation.inviteeEmail,
 			status: invitation.status || "pending",
 			createdAt: invitation.createdAt,
 			expiresAt: invitation.expiresAt,
+			token: invitation.token, // For pending invitations
+			isExistingUser: !!invitation.inviteeId, // True for collaboration_invitations
 		};
 
 		console.log("✅ Returning invitation data:", responseData);
