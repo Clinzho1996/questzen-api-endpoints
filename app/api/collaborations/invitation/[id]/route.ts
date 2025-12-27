@@ -1,15 +1,16 @@
+// app/api/collaborations/invitation/[id]/route.ts
 import { getDatabase } from "@/lib/mongodb";
-import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
 	request: NextRequest,
-	context: { params: Promise<{ id: string }> } // Changed: params is a Promise
+	context: { params: Promise<{ id: string }> }
 ) {
 	try {
-		// AWAIT the params first
-		const params = await context.params; // ← Add this
+		const params = await context.params;
 		const { id: invitationId } = params;
+
+		console.log("🔍 Looking for invitation ID:", invitationId);
 
 		if (!invitationId) {
 			return NextResponse.json(
@@ -21,45 +22,60 @@ export async function GET(
 		const db = await getDatabase();
 		const now = new Date();
 
-		// Helper function to try finding with both ObjectId and string
-		const findInvitation = async () => {
-			let invitation = null;
+		// DEBUG: Log all invitations to see what's in DB
+		console.log("📊 Checking database for invitations...");
 
-			// First try as ObjectId
-			if (ObjectId.isValid(invitationId)) {
-				try {
-					const objectId = new ObjectId(invitationId);
-					invitation = await db
-						.collection("collaboration_invitations")
-						.findOne({ _id: objectId });
+		// Check both collections
+		const allCollabInvites = await db
+			.collection("collaboration_invitations")
+			.find({})
+			.limit(5)
+			.toArray();
+		const allPendingInvites = await db
+			.collection("pending_invitations")
+			.find({})
+			.limit(5)
+			.toArray();
 
-					if (!invitation) {
-						invitation = await db
-							.collection("pending_invitations")
-							.findOne({ _id: objectId });
-					}
-				} catch (error) {
-					console.log("ObjectId query failed, trying as string:", error);
-				}
-			}
+		console.log(
+			"📁 collaboration_invitations sample:",
+			allCollabInvites.map((i) => ({
+				_id: i._id?.toString?.(),
+				questId: i.questId,
+				inviteeEmail: i.inviteeEmail,
+				status: i.status,
+			}))
+		);
 
-			// If not found with ObjectId, try as string
-			if (!invitation) {
-				invitation = await db
-					.collection("collaboration_invitations")
-					.findOne({ _id: invitationId } as any);
+		console.log(
+			"📁 pending_invitations sample:",
+			allPendingInvites.map((i) => ({
+				_id: i._id?.toString?.(),
+				questId: i.questId,
+				inviteeEmail: i.inviteeEmail,
+				status: i.status,
+			}))
+		);
 
-				if (!invitation) {
-					invitation = await db
-						.collection("pending_invitations")
-						.findOne({ _id: invitationId } as any);
-				}
-			}
+		let invitation = null;
 
-			return invitation;
-		};
+		// Since your invitation IDs are UUID strings, we need to look for them as strings
+		// Try collaboration_invitations first
+		invitation = await db.collection("collaboration_invitations").findOne({
+			_id: invitationId as any,
+		});
 
-		const invitation = await findInvitation();
+		// If not found, try pending_invitations
+		if (!invitation) {
+			console.log(
+				"Not found in collaboration_invitations, trying pending_invitations..."
+			);
+			invitation = await db.collection("pending_invitations").findOne({
+				_id: invitationId as any,
+			});
+		}
+
+		console.log("🔎 Found invitation:", invitation);
 
 		if (!invitation) {
 			return NextResponse.json(
@@ -79,44 +95,50 @@ export async function GET(
 			);
 		}
 
-		// Helper to get quest with proper ID handling
-		const getQuest = async (questId: any) => {
-			try {
-				if (ObjectId.isValid(questId)) {
-					return await db.collection("goals").findOne(
-						{ _id: new ObjectId(questId) },
-						{
-							projection: {
-								title: 1,
-								category: 1,
-								description: 1,
-								dueDate: 1,
-							},
-						}
-					);
-				} else {
-					return await db.collection("goals").findOne({ _id: questId } as any, {
-						projection: { title: 1, category: 1, description: 1, dueDate: 1 },
-					});
-				}
-			} catch (error) {
-				console.error("Error fetching quest:", error);
-				return null;
-			}
-		};
+		// Check if already accepted
+		if (invitation.status === "accepted") {
+			return NextResponse.json(
+				{
+					error: { message: "Invitation already accepted" },
+					invitation,
+				},
+				{ status: 409 }
+			);
+		}
+
+		// Check if rejected
+		if (invitation.status === "rejected") {
+			return NextResponse.json(
+				{
+					error: { message: "Invitation was declined" },
+					invitation,
+				},
+				{ status: 410 }
+			);
+		}
 
 		// Get quest details
-		const quest = await getQuest(invitation.questId);
+		const quest = await db
+			.collection("goals")
+			.findOne({ _id: invitation.questId } as any, {
+				projection: {
+					title: 1,
+					category: 1,
+					description: 1,
+					dueDate: 1,
+				},
+			});
+
+		console.log("📋 Quest found:", quest);
 
 		// Get inviter details
 		const inviter = await db
 			.collection("users")
-			.findOne(
-				{ firebaseUid: invitation.inviterId },
-				{ projection: { displayName: 1, photoURL: 1 } }
-			);
+			.findOne({ firebaseUid: invitation.inviterId } as any, {
+				projection: { displayName: 1, photoURL: 1 },
+			});
 
-		const response = NextResponse.json({
+		const responseData = {
 			invitationId,
 			questId: invitation.questId,
 			questTitle: quest?.title || invitation.questTitle,
@@ -130,7 +152,11 @@ export async function GET(
 			status: invitation.status || "pending",
 			createdAt: invitation.createdAt,
 			expiresAt: invitation.expiresAt,
-		});
+		};
+
+		console.log("✅ Returning invitation data:", responseData);
+
+		const response = NextResponse.json(responseData);
 
 		// Add CORS headers
 		const origin = request.headers.get("origin") || "";
@@ -140,7 +166,7 @@ export async function GET(
 			"http://localhost:3000",
 		];
 
-		if (allowedOrigins.includes(origin)) {
+		if (allowedOrigins.includes(origin) || origin.includes("localhost")) {
 			response.headers.set("Access-Control-Allow-Origin", origin);
 		}
 		response.headers.set("Access-Control-Allow-Credentials", "true");
@@ -153,30 +179,4 @@ export async function GET(
 			{ status: 500 }
 		);
 	}
-}
-
-// Also update OPTIONS handler
-export async function OPTIONS(request: NextRequest) {
-	const origin = request.headers.get("origin") || "http://localhost:5173";
-	const allowedOrigins = [
-		"https://questzenai.devclinton.org",
-		"http://localhost:5173",
-		"http://localhost:3000",
-	];
-
-	const response = new NextResponse(null, { status: 200 });
-
-	if (allowedOrigins.includes(origin)) {
-		response.headers.set("Access-Control-Allow-Origin", origin);
-	}
-	response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-	response.headers.set(
-		"Access-Control-Allow-Headers",
-		"Content-Type, Authorization"
-	);
-	response.headers.set("Access-Control-Allow-Credentials", "true");
-	response.headers.set("Access-Control-Max-Age", "86400");
-	response.headers.set("Cache-Control", "no-store, max-age=0");
-
-	return response;
 }
