@@ -196,6 +196,20 @@ export async function GET(request: NextRequest) {
 				role,
 				isCollaborative,
 				participants,
+				dueDate:
+					goal.dueDate ||
+					(goal.deadline
+						? new Date(goal.deadline).toISOString().split("T")[0]
+						: undefined),
+				dueTime:
+					goal.dueTime ||
+					(goal.deadline
+						? new Date(goal.deadline)
+								.toISOString()
+								.split("T")[1]
+								.substring(0, 5)
+						: undefined),
+
 				// Ensure progress is a number
 				progress:
 					typeof goal.progress === "number"
@@ -207,6 +221,8 @@ export async function GET(request: NextRequest) {
 				category: goal.category || "Others",
 				// Ensure priority is one of the allowed values
 				priority: goal.priority || "Medium",
+				createdAt: goal.createdAt?.toISOString?.() || new Date().toISOString(),
+				updatedAt: goal.updatedAt?.toISOString?.() || new Date().toISOString(),
 			};
 		});
 
@@ -252,15 +268,31 @@ export async function GET(request: NextRequest) {
 	}
 }
 
+// app/api/goals/route.ts - POST method
 export async function POST(request: NextRequest) {
 	try {
 		const user = await requireAuth(request);
 		const body = await request.json();
-		const { title, description, category, priority, deadline } = body;
+		const {
+			title,
+			description,
+			category,
+			priority,
+			dueDate,
+			dueTime, // Changed from deadline
+			deadline, // Keep for backward compatibility
+			userId, // Frontend might send this
+		} = body;
 
-		console.log("🎯 Creating goal for user:", {
-			userId: user.userId,
-			email: user.email,
+		console.log("🎯 Creating goal with data:", {
+			title,
+			category,
+			priority,
+			dueDate,
+			dueTime,
+			deadline,
+			frontendUserId: userId,
+			authUserId: user.userId,
 		});
 
 		// Validation
@@ -304,13 +336,37 @@ export async function POST(request: NextRequest) {
 			currentUser = { _id: result.insertedId };
 		}
 
+		// Combine dueDate and dueTime into a single deadline
+		let finalDeadline: Date | undefined;
+
+		if (dueDate && dueTime) {
+			// Combine date and time
+			const dateTimeString = `${dueDate}T${dueTime}`;
+			finalDeadline = new Date(dateTimeString);
+		} else if (deadline) {
+			// Use provided deadline
+			finalDeadline = new Date(deadline);
+		} else if (dueDate) {
+			// Only date provided (use start of day)
+			finalDeadline = new Date(dueDate);
+		}
+
+		console.log("📅 Deadline calculation:", {
+			dueDate,
+			dueTime,
+			deadline,
+			finalDeadline: finalDeadline?.toISOString(),
+		});
+
 		const newGoal = {
-			userId: currentUser._id,
+			userId: currentUser._id, // Store as ObjectId
 			title,
 			description: description || "",
-			category,
-			priority: priority || "medium",
-			deadline: deadline ? new Date(deadline) : undefined,
+			category: category || "Others",
+			priority: (priority || "medium").toLowerCase(),
+			deadline: finalDeadline,
+			dueDate: dueDate, // Also store separately for frontend
+			dueTime: dueTime, // Also store separately for frontend
 			tasks: [],
 			completed: false,
 			progress: 0,
@@ -323,18 +379,29 @@ export async function POST(request: NextRequest) {
 			updatedAt: new Date(),
 		};
 
+		console.log("📝 Saving goal to database:", newGoal);
+
 		const result = await db.collection("goals").insertOne(newGoal);
 
 		const createdGoal = {
 			...newGoal,
 			id: result.insertedId.toString(),
-			userId: currentUser._id.toString(),
+			userId: currentUser._id.toString(), // Convert to string for frontend
+			userIdObject: currentUser._id, // Keep ObjectId for internal use
+			deadline: finalDeadline?.toISOString(),
+			dueDate: dueDate,
+			dueTime: dueTime,
+			createdAt: newGoal.createdAt.toISOString(),
+			updatedAt: newGoal.updatedAt.toISOString(),
 		};
 
 		console.log("✅ Created goal:", {
 			id: createdGoal.id,
 			title: createdGoal.title,
 			userId: createdGoal.userId,
+			deadline: createdGoal.deadline,
+			dueDate: createdGoal.dueDate,
+			dueTime: createdGoal.dueTime,
 		});
 
 		return NextResponse.json(createdGoal, { status: 201 });
