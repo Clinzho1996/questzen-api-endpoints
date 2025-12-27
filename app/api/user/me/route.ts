@@ -1,34 +1,58 @@
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
+import { ObjectId, WithId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-// Dynamic route handler that handles all methods
-export async function GET(request: NextRequest) {
-	return handleRequest(request, "GET");
+/* =======================
+   Types
+======================= */
+
+interface UserDocument {
+	_id: ObjectId;
+	firebaseUid: string;
+	email: string;
+	displayName?: string;
+	photoURL?: string;
+	subscriptionTier?: string;
+	streak?: number;
+	longestStreak?: number;
+	totalFocusMinutes?: number;
+	level?: number;
+	xp?: number;
+	achievements?: unknown[];
+	stripeCustomerId?: string;
+	stripeSubscriptionId?: string;
+	subscriptionStatus?: string;
+	currentPeriodEnd?: Date;
+	password?: string;
+	updatedAt?: Date;
+	createdAt?: Date;
 }
 
-export async function PUT(request: NextRequest) {
-	return handleRequest(request, "PUT");
+interface AuthUser {
+	userId: string;
+	email?: string;
 }
 
-export async function OPTIONS(request: NextRequest) {
-	return handleRequest(request, "OPTIONS");
-}
+/* =======================
+   CORS Helper
+======================= */
 
-async function handleRequest(request: NextRequest, method: string) {
-	// Set CORS headers
-	const origin = request.headers.get("origin") || "";
+function getCorsHeaders(origin: string | null): Headers {
+	const headers = new Headers();
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
 		"http://localhost:5173",
 		"http://localhost:3000",
 	];
 
-	const headers = new Headers();
-
-	if (allowedOrigins.includes(origin) || origin.includes("localhost")) {
+	if (
+		origin &&
+		(allowedOrigins.includes(origin) || origin.includes("localhost"))
+	) {
 		headers.set("Access-Control-Allow-Origin", origin);
 	}
+
 	headers.set("Access-Control-Allow-Credentials", "true");
 	headers.set(
 		"Access-Control-Allow-Methods",
@@ -37,98 +61,160 @@ async function handleRequest(request: NextRequest, method: string) {
 	headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 	headers.set("Access-Control-Max-Age", "86400");
 
-	// Handle OPTIONS preflight
-	if (method === "OPTIONS" || request.method === "OPTIONS") {
-		headers.set("Cache-Control", "no-store, max-age=0");
-		return new NextResponse(null, { status: 200, headers });
-	}
+	return headers;
+}
+
+/* =======================
+   Route Handlers
+======================= */
+
+export async function OPTIONS(request: NextRequest) {
+	const headers = getCorsHeaders(request.headers.get("origin"));
+	headers.set("Cache-Control", "no-store, max-age=0");
+	return new NextResponse(null, { status: 200, headers });
+}
+
+export async function GET(request: NextRequest) {
+	const headers = getCorsHeaders(request.headers.get("origin"));
 
 	try {
-		if (method === "GET" || request.method === "GET") {
-			const user = await requireAuth(request);
-			const db = await getDatabase();
+		const user = (await requireAuth(request)) as AuthUser;
 
-			const userData = await db
-				.collection("users")
-				.findOne({ firebaseUid: user.userId }, { projection: { password: 0 } });
-
-			if (!userData) {
-				return NextResponse.json(
-					{ error: { message: "User not found" } },
-					{ status: 404, headers }
-				);
-			}
-
+		if (!user.userId) {
 			return NextResponse.json(
-				{
-					id: userData._id.toString(),
-					firebaseUid: userData.firebaseUid,
-					email: userData.email,
-					displayName: userData.displayName,
-					photoURL: userData.photoURL,
-					subscriptionTier: userData.subscriptionTier || "free",
-					streak: userData.streak || 0,
-					longestStreak: userData.longestStreak || 0,
-					totalFocusMinutes: userData.totalFocusMinutes || 0,
-					level: userData.level || 1,
-					xp: userData.xp || 0,
-					achievements: userData.achievements || [],
-					stripeCustomerId: userData.stripeCustomerId,
-					stripeSubscriptionId: userData.stripeSubscriptionId,
-					subscriptionStatus: userData.subscriptionStatus,
-					currentPeriodEnd: userData.currentPeriodEnd,
-				},
-				{ headers }
-			);
-		}
-
-		if (method === "PUT" || request.method === "PUT") {
-			const user = await requireAuth(request);
-			const body = await request.json();
-			const { displayName, photoURL } = body;
-
-			const db = await getDatabase();
-			const updateData: any = { updatedAt: new Date() };
-
-			if (displayName) updateData.displayName = displayName;
-			if (photoURL) updateData.photoURL = photoURL;
-
-			await db
-				.collection("users")
-				.updateOne({ firebaseUid: user.userId }, { $set: updateData });
-
-			const updatedUser = await db
-				.collection("users")
-				.findOne({ firebaseUid: user.userId }, { projection: { password: 0 } });
-
-			return NextResponse.json(
-				{
-					id: updatedUser!._id.toString(),
-					firebaseUid: updatedUser!.firebaseUid,
-					email: updatedUser!.email,
-					displayName: updatedUser!.displayName,
-					photoURL: updatedUser!.photoURL,
-					subscriptionTier: updatedUser!.subscriptionTier || "free",
-				},
-				{ headers }
-			);
-		}
-
-		// Method not allowed
-		return NextResponse.json(
-			{ error: { message: "Method not allowed" } },
-			{ status: 405, headers }
-		);
-	} catch (error: any) {
-		console.error(`API error (${method}):`, error);
-
-		if (error.message === "Unauthorized") {
-			return NextResponse.json(
-				{ error: { message: "Unauthorized" } },
+				{ error: { message: "Invalid auth payload" } },
 				{ status: 401, headers }
 			);
 		}
 
+		const db = await getDatabase();
+		const users = db.collection<UserDocument>("users");
+
+		let foundUser: WithId<UserDocument> | null = null;
+
+		// 1. firebaseUid
+		foundUser = await users.findOne(
+			{ firebaseUid: user.userId },
+			{ projection: { password: 0 } }
+		);
+
+		// 2. email fallback
+		if (!foundUser && user.email) {
+			foundUser = await users.findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{ projection: { password: 0 } }
+			);
+		}
+
+		// 3. ObjectId fallback
+		if (!foundUser && user.userId.length === 24) {
+			try {
+				foundUser = await users.findOne(
+					{ _id: new ObjectId(user.userId) },
+					{ projection: { password: 0 } }
+				);
+			} catch {
+				// ignore invalid ObjectId
+			}
+		}
+
+		if (!foundUser) {
+			return NextResponse.json(
+				{
+					error: {
+						message: "User not found in database",
+						debug: {
+							searchedId: user.userId,
+							searchedEmail: user.email,
+						},
+					},
+				},
+				{ status: 404, headers }
+			);
+		}
+
+		return NextResponse.json(
+			{
+				id: foundUser._id.toString(),
+				firebaseUid: foundUser.firebaseUid,
+				email: foundUser.email,
+				displayName: foundUser.displayName,
+				photoURL: foundUser.photoURL,
+				subscriptionTier: foundUser.subscriptionTier ?? "free",
+				streak: foundUser.streak ?? 0,
+				longestStreak: foundUser.longestStreak ?? 0,
+				totalFocusMinutes: foundUser.totalFocusMinutes ?? 0,
+				level: foundUser.level ?? 1,
+				xp: foundUser.xp ?? 0,
+				achievements: foundUser.achievements ?? [],
+				stripeCustomerId: foundUser.stripeCustomerId,
+				stripeSubscriptionId: foundUser.stripeSubscriptionId,
+				subscriptionStatus: foundUser.subscriptionStatus,
+				currentPeriodEnd: foundUser.currentPeriodEnd,
+			},
+			{ headers }
+		);
+	} catch (error) {
+		return NextResponse.json(
+			{ error: { message: "Server error" } },
+			{ status: 500, headers }
+		);
+	}
+}
+
+export async function PUT(request: NextRequest) {
+	const headers = getCorsHeaders(request.headers.get("origin"));
+
+	try {
+		const user = (await requireAuth(request)) as AuthUser;
+		const body: Partial<Pick<UserDocument, "displayName" | "photoURL">> =
+			await request.json();
+
+		const db = await getDatabase();
+		const users = db.collection<UserDocument>("users");
+
+		const updateData: Partial<UserDocument> = {
+			updatedAt: new Date(),
+			...(body.displayName && { displayName: body.displayName }),
+			...(body.photoURL && { photoURL: body.photoURL }),
+		};
+
+		const result = await users.updateOne(
+			{ firebaseUid: user.userId },
+			{ $set: updateData }
+		);
+
+		if (!result.matchedCount) {
+			return NextResponse.json(
+				{ error: { message: "User not found" } },
+				{ status: 404, headers }
+			);
+		}
+
+		const updatedUser = await users.findOne(
+			{ firebaseUid: user.userId },
+			{ projection: { password: 0 } }
+		);
+
+		if (!updatedUser) {
+			return NextResponse.json(
+				{ error: { message: "User not found after update" } },
+				{ status: 404, headers }
+			);
+		}
+
+		return NextResponse.json(
+			{
+				id: updatedUser._id.toString(),
+				firebaseUid: updatedUser.firebaseUid,
+				email: updatedUser.email,
+				displayName: updatedUser.displayName,
+				photoURL: updatedUser.photoURL,
+				subscriptionTier: updatedUser.subscriptionTier ?? "free",
+			},
+			{ headers }
+		);
+	} catch {
 		return NextResponse.json(
 			{ error: { message: "Server error" } },
 			{ status: 500, headers }
