@@ -16,13 +16,16 @@ export async function OPTIONS(request: NextRequest) {
 	if (allowedOrigins.includes(origin)) {
 		response.headers.set("Access-Control-Allow-Origin", origin);
 	}
-	response.headers.set("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS"); // Specific methods for this route
+	response.headers.set("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
 	response.headers.set(
 		"Access-Control-Allow-Headers",
 		"Content-Type, Authorization"
 	);
 	response.headers.set("Access-Control-Allow-Credentials", "true");
 	response.headers.set("Access-Control-Max-Age", "86400");
+
+	// ⭐ ADD THIS LINE: Prevent caching of OPTIONS response
+	response.headers.set("Cache-Control", "no-store, max-age=0");
 
 	return response;
 }
