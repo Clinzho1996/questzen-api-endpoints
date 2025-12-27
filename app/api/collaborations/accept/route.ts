@@ -10,11 +10,6 @@ export async function POST(request: NextRequest) {
 		const { invitationId } = body;
 
 		console.log("🎯 Accepting invitation:", invitationId);
-		console.log("🔐 Authenticated user from requireAuth:", {
-			userId: user.userId,
-			email: user.email,
-			firebaseUid: user.userId,
-		});
 
 		if (!invitationId) {
 			return NextResponse.json(
@@ -26,86 +21,32 @@ export async function POST(request: NextRequest) {
 		const db = await getDatabase();
 		const timestamp = new Date();
 
-		// Get current user info - try multiple lookup methods
-		let currentUser = null;
-
-		// Method 1: Try firebaseUid (primary)
-		if (user.userId) {
-			console.log(`🔍 Looking up user by firebaseUid: ${user.userId}`);
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ firebaseUid: user.userId },
-					{ projection: { email: 1, displayName: 1, _id: 1 } }
-				);
-		}
-
-		// Method 2: Try by email
-		if (!currentUser && user.email) {
-			console.log(`🔍 Looking up user by email: ${user.email}`);
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ email: user.email.toLowerCase().trim() },
-					{ projection: { email: 1, displayName: 1, _id: 1, firebaseUid: 1 } }
-				);
-		}
-
-		// Method 3: Check if user exists at all in database
-		if (!currentUser) {
-			console.log("❌ User not found in database");
-			console.log("📊 Checking users collection for debugging...");
-
-			// List some users to see what's in the database
-			const sampleUsers = await db
-				.collection("users")
-				.find({})
-				.limit(5)
-				.toArray();
-			console.log(
-				"📁 Sample users in database:",
-				sampleUsers.map((u) => ({
-					_id: u._id,
-					firebaseUid: u.firebaseUid,
-					email: u.email,
-					displayName: u.displayName,
-				}))
+		// Get current user info
+		let currentUser = await db
+			.collection("users")
+			.findOne(
+				{ firebaseUid: user.userId },
+				{ projection: { email: 1, displayName: 1, _id: 1, firebaseUid: 1 } }
 			);
 
+		if (!currentUser) {
 			return NextResponse.json(
-				{
-					error: {
-						message: "User account not found",
-						details:
-							"Your account exists in Firebase but not in our database. Please log out and log in again to sync your account.",
-					},
-				},
+				{ error: { message: "User not found" } },
 				{ status: 404 }
 			);
 		}
 
-		console.log("👤 Found current user in database:", {
-			_id: currentUser._id,
-			firebaseUid: currentUser.firebaseUid,
-			email: currentUser.email,
-			displayName: currentUser.displayName,
-		});
-
 		// Look for invitation
-		console.log("🔍 Looking for invitation with ID:", invitationId);
 		let invitation = await db.collection("collaboration_invitations").findOne({
 			_id: invitationId as any,
 			status: "pending",
 		});
-
-		console.log("📋 Found in collaboration_invitations:", invitation);
 
 		if (!invitation) {
 			invitation = await db.collection("pending_invitations").findOne({
 				_id: invitationId as any,
 				status: "pending",
 			});
-			console.log("📋 Found in pending_invitations:", invitation);
 		}
 
 		if (!invitation) {
@@ -115,37 +56,30 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		console.log("✅ Invitation details:", {
-			id: invitation._id,
-			questId: invitation.questId,
-			inviteeEmail: invitation.inviteeEmail,
-			inviterEmail: invitation.inviterEmail,
-			status: invitation.status,
-		});
+		// Check if invitation has expired
+		if (invitation.expiresAt && new Date(invitation.expiresAt) < timestamp) {
+			return NextResponse.json(
+				{ error: { message: "Invitation has expired" } },
+				{ status: 410 }
+			);
+		}
 
-		// Check if current user's email matches invitation
-		console.log("📧 Email check:", {
-			currentUserEmail: currentUser.email,
-			invitationEmail: invitation.inviteeEmail,
-			match: currentUser.email === invitation.inviteeEmail,
-		});
-
+		// Check email match
 		if (currentUser.email !== invitation.inviteeEmail) {
 			return NextResponse.json(
 				{
 					error: {
 						message: "Email mismatch",
-						details: `This invitation was sent to ${invitation.inviteeEmail}, but your account email is ${currentUser.email}. Please log in with the correct account.`,
+						details: `This invitation was sent to ${invitation.inviteeEmail}, but your account email is ${currentUser.email}`,
 					},
 				},
 				{ status: 403 }
 			);
 		}
 
-		// Rest of your acceptance logic...
 		// Update invitation status
 		if (invitation.token) {
-			// pending_invitations have token
+			// pending_invitations
 			await db.collection("pending_invitations").updateOne(
 				{ _id: invitationId as any },
 				{
@@ -170,8 +104,6 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		console.log("✅ Updated invitation status");
-
 		// Add user to quest collaborators
 		await db.collection("goals").updateOne({ _id: invitation.questId } as any, {
 			$addToSet: {
@@ -194,7 +126,35 @@ export async function POST(request: NextRequest) {
 			},
 		});
 
-		console.log("✅ Added user to quest collaborators");
+		// IMPORTANT: Add quest to user's personal goals
+		// Check if quest already exists in user_goals or similar collection
+		const userQuestExists = await db.collection("user_goals").findOne({
+			userId: currentUser.firebaseUid || currentUser._id.toString(),
+			goalId: invitation.questId,
+		});
+
+		if (!userQuestExists) {
+			// Add quest to user's personal goals
+			await db.collection("user_goals").insertOne({
+				userId: currentUser.firebaseUid || currentUser._id.toString(),
+				goalId: invitation.questId,
+				role: "collaborator",
+				addedAt: timestamp,
+				status: "active",
+				isCollaborative: true,
+				inviterId: invitation.inviterId,
+				inviterName: invitation.inviterName,
+				notificationRead: false,
+			});
+		}
+
+		// ALTERNATIVE: If you don't have user_goals collection,
+		// add a field to the goals collection to track user access
+		await db.collection("goals").updateOne({ _id: invitation.questId } as any, {
+			$addToSet: {
+				accessibleTo: currentUser.firebaseUid || currentUser._id.toString(),
+			},
+		});
 
 		// Create notifications
 		await db.collection("notifications").insertOne({
@@ -232,11 +192,33 @@ export async function POST(request: NextRequest) {
 			createdAt: timestamp,
 		});
 
+		// Get quest details for response
+		const quest = await db
+			.collection("goals")
+			.findOne({ _id: invitation.questId } as any, {
+				projection: {
+					title: 1,
+					category: 1,
+					description: 1,
+					dueDate: 1,
+					userId: 1,
+					collaborators: 1,
+				},
+			});
+
 		const response = NextResponse.json({
 			success: true,
 			message: "🎉 Invitation accepted successfully!",
-			questId: invitation.questId,
-			questTitle: invitation.questTitle,
+			quest: {
+				id: invitation.questId,
+				title: quest?.title || invitation.questTitle,
+				category: quest?.category,
+				description: quest?.description,
+				dueDate: quest?.dueDate,
+				isCollaborative: true,
+				ownerId: quest?.userId || invitation.inviterId,
+				collaborators: quest?.collaborators || [],
+			},
 			collaborator: {
 				userId: currentUser.firebaseUid || currentUser._id.toString(),
 				email: currentUser.email,
@@ -264,7 +246,7 @@ export async function POST(request: NextRequest) {
 
 		return response;
 	} catch (error: any) {
-		console.error("❌ Accept invitation error:", error);
+		console.error("Accept invitation error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
@@ -278,8 +260,6 @@ export async function POST(request: NextRequest) {
 				error: {
 					message: "Failed to accept invitation",
 					details: error.message,
-					stack:
-						process.env.NODE_ENV === "development" ? error.stack : undefined,
 				},
 			},
 			{ status: 500 }
