@@ -51,6 +51,7 @@ function decodeJWT(token: string): any {
 	}
 }
 
+// lib/auth.ts - Update the Firebase token handling
 export async function verifyAuth(
 	request: NextRequest
 ): Promise<AuthUser | null> {
@@ -62,38 +63,50 @@ export async function verifyAuth(
 
 		const token = authHeader.substring(7);
 
-		// Log token info for debugging
 		console.log("🔑 Token received, length:", token.length);
 		console.log("🔑 First 50 chars:", token.substring(0, 50));
-		console.log(
-			"🔑 Token looks like:",
-			token.startsWith("eyJ") ? "JWT" : "Unknown"
-		);
 
-		// First, try to decode as Firebase token
+		// Decode the token to see what's in it
 		const decodedPayload = decodeJWT(token);
 
 		if (decodedPayload) {
-			console.log("🔑 Decoded payload:", {
-				hasUid: !!decodedPayload.uid,
-				hasFirebase: !!decodedPayload.firebase,
+			console.log("🔑 Decoded payload keys:", Object.keys(decodedPayload));
+			console.log("🔑 Important claims:", {
+				uid: decodedPayload.uid,
+				sub: decodedPayload.sub, // Firebase UID is often in 'sub'
+				user_id: decodedPayload.user_id,
+				firebase: decodedPayload.firebase,
 				email: decodedPayload.email,
-				userId: decodedPayload.user_id || decodedPayload.sub,
+				email_verified: decodedPayload.email_verified,
 			});
 		}
 
 		// Check if it's a Firebase token
-		if (decodedPayload && decodedPayload.uid && decodedPayload.firebase) {
-			console.log("🔑 Detected Firebase token with UID:", decodedPayload.uid);
+		// Firebase tokens have either 'firebase' claim OR 'sub' with no 'userId'
+		if (
+			decodedPayload &&
+			(decodedPayload.firebase ||
+				(decodedPayload.sub && !decodedPayload.userId))
+		) {
+			// Get the actual Firebase UID
+			const firebaseUid =
+				decodedPayload.uid || decodedPayload.sub || decodedPayload.user_id;
+
+			if (!firebaseUid) {
+				console.error("❌ No UID found in Firebase token");
+				return null;
+			}
+
+			console.log("🔑 Detected Firebase token with UID:", firebaseUid);
 
 			// Get user from MongoDB by firebaseUid
 			const db = await getDatabase();
 			let user = await db.collection("users").findOne({
-				firebaseUid: decodedPayload.uid,
+				firebaseUid: firebaseUid,
 			});
 
 			if (!user) {
-				// Try by email
+				// Try by email (for Google OAuth users)
 				if (decodedPayload.email) {
 					const userByEmail = await db.collection("users").findOne({
 						email: decodedPayload.email.toLowerCase().trim(),
@@ -106,12 +119,12 @@ export async function verifyAuth(
 							{ _id: userByEmail._id },
 							{
 								$set: {
-									firebaseUid: decodedPayload.uid,
+									firebaseUid: firebaseUid,
 									updatedAt: new Date(),
 								},
 							}
 						);
-						userByEmail.firebaseUid = decodedPayload.uid;
+						userByEmail.firebaseUid = firebaseUid;
 						user = userByEmail;
 					}
 				}
@@ -121,13 +134,13 @@ export async function verifyAuth(
 					console.log("🔄 Creating new user from Firebase token...");
 
 					const newUser = {
-						firebaseUid: decodedPayload.uid,
+						firebaseUid: firebaseUid,
 						email: decodedPayload.email || "",
 						displayName:
 							decodedPayload.name ||
 							decodedPayload.email?.split("@")[0] ||
 							"QuestZen User",
-						photoURL: decodedPayload.picture || "",
+						photoURL: decodedPayload.picture || decodedPayload.avatar || "",
 						subscriptionTier: "free",
 						streak: 0,
 						longestStreak: 0,
@@ -135,6 +148,9 @@ export async function verifyAuth(
 						level: 1,
 						xp: 0,
 						achievements: [],
+						authProviders: decodedPayload.firebase?.sign_in_provider
+							? [decodedPayload.firebase.sign_in_provider.replace(".com", "")]
+							: ["firebase"],
 						createdAt: new Date(),
 						updatedAt: new Date(),
 					};
@@ -149,7 +165,7 @@ export async function verifyAuth(
 					console.log("✅ Created new user with ID:", user._id);
 				}
 			} else {
-				console.log("✅ Found existing user with firebaseUid");
+				console.log("✅ Found existing user with matching firebaseUid");
 			}
 
 			return {
@@ -157,7 +173,7 @@ export async function verifyAuth(
 				email: user.email,
 				subscriptionTier: user.subscriptionTier || "free",
 				provider: "firebase",
-				firebaseUid: decodedPayload.uid,
+				firebaseUid: firebaseUid,
 			};
 		}
 
@@ -189,38 +205,7 @@ export async function verifyAuth(
 				firebaseUid: user.firebaseUid,
 			};
 		} catch (jwtError: any) {
-			console.error("❌ Custom JWT verification error:", {
-				message: jwtError.message,
-				name: jwtError.name,
-				expiredAt: jwtError.expiredAt,
-			});
-
-			// If it's a JWT error, try one more thing - check if it's a malformed Firebase token
-			if (decodedPayload && decodedPayload.sub) {
-				console.log(
-					"🔑 Token has 'sub' claim, might be Firebase token without firebase claim"
-				);
-
-				// Try to find user by email from decoded payload
-				if (decodedPayload.email) {
-					const db = await getDatabase();
-					const user = await db.collection("users").findOne({
-						email: decodedPayload.email.toLowerCase().trim(),
-					});
-
-					if (user) {
-						console.log("✅ Found user by email from malformed token");
-						return {
-							userId: user._id.toString(),
-							email: user.email,
-							subscriptionTier: user.subscriptionTier || "free",
-							provider: "firebase-malformed",
-							firebaseUid: user.firebaseUid,
-						};
-					}
-				}
-			}
-
+			console.error("❌ Custom JWT verification error:", jwtError.message);
 			return null;
 		}
 	} catch (error) {
