@@ -14,6 +14,12 @@ export async function PATCH(
 		const body = await request.json();
 		const db = await getDatabase();
 
+		console.log("🔄 PATCH Goal Request:", {
+			goalId: params.id,
+			userId: user.userId,
+			updates: body,
+		});
+
 		// Get current user info
 		const currentUser = await db
 			.collection("users")
@@ -60,6 +66,49 @@ export async function PATCH(
 			updatedAt: new Date(),
 		};
 
+		// Handle dueDate and dueTime
+		if (body.dueDate !== undefined || body.dueTime !== undefined) {
+			console.log("📅 Processing date/time update:", {
+				dueDate: body.dueDate,
+				dueTime: body.dueTime,
+				existingDueDate: goal.dueDate,
+				existingDueTime: goal.dueTime,
+			});
+
+			// Get existing or new values
+			const newDueDate =
+				body.dueDate !== undefined ? body.dueDate : goal.dueDate;
+			const newDueTime =
+				body.dueTime !== undefined ? body.dueTime : goal.dueTime;
+
+			// Update separate fields
+			updateData.dueDate = newDueDate;
+			updateData.dueTime = newDueTime;
+
+			// Update combined deadline field
+			if (newDueDate && newDueTime) {
+				// Combine date and time into a proper Date object
+				try {
+					const dateTimeString = `${newDueDate}T${newDueTime}`;
+					updateData.deadline = new Date(dateTimeString);
+					console.log("📅 Combined deadline:", updateData.deadline);
+				} catch (error) {
+					console.error("❌ Error parsing date/time:", error);
+					// Fallback to just date
+					updateData.deadline = new Date(newDueDate);
+				}
+			} else if (newDueDate) {
+				// Only date provided
+				updateData.deadline = new Date(newDueDate);
+			} else {
+				// No date/time, clear deadline
+				updateData.deadline = null;
+			}
+		} else if (body.deadline !== undefined) {
+			// Legacy support for deadline field
+			updateData.deadline = body.deadline ? new Date(body.deadline) : null;
+		}
+
 		// Owners can update all fields
 		if (isOwner) {
 			if (body.title !== undefined) updateData.title = body.title;
@@ -67,14 +116,21 @@ export async function PATCH(
 				updateData.description = body.description;
 			if (body.category !== undefined) updateData.category = body.category;
 			if (body.priority !== undefined) updateData.priority = body.priority;
-			if (body.deadline !== undefined)
-				updateData.deadline = body.deadline ? new Date(body.deadline) : null;
 			if (body.tasks !== undefined) updateData.tasks = body.tasks;
+
+			// Handle progress updates
+			if (body.progress !== undefined) {
+				updateData.progress = body.progress;
+			}
 
 			if (body.completed !== undefined) {
 				updateData.completed = body.completed;
 				if (body.completed) {
 					updateData.completedAt = new Date();
+					// Auto-set progress to 100% when completed
+					if (body.progress === undefined) {
+						updateData.progress = 100;
+					}
 				}
 			}
 		} else {
@@ -85,25 +141,64 @@ export async function PATCH(
 				updateData.completed = body.completed;
 				if (body.completed) {
 					updateData.completedAt = new Date();
+					// Auto-set progress to 100% when completed
+					if (body.progress === undefined) {
+						updateData.progress = 100;
+					}
 				}
 			}
 		}
 
+		// Also handle progress updates separately (for toggleGoal)
+		if (body.progress !== undefined) {
+			updateData.progress = body.progress;
+		}
+
+		console.log("📝 Update data being applied:", updateData);
+
+		// Perform the update
 		await db
 			.collection("goals")
 			.updateOne({ _id: new ObjectId(params.id) }, { $set: updateData });
 
+		// Get updated goal
 		const updatedGoal = await db.collection("goals").findOne({
 			_id: new ObjectId(params.id),
 		});
 
-		return NextResponse.json({
+		if (!updatedGoal) {
+			return NextResponse.json(
+				{ error: { message: "Failed to retrieve updated goal" } },
+				{ status: 500 }
+			);
+		}
+
+		// Transform the response
+		const responseGoal = {
 			...updatedGoal,
-			id: updatedGoal!._id.toString(),
+			id: updatedGoal._id.toString(),
 			_id: undefined,
+			userId: updatedGoal.userId?.toString?.(),
 			role: isOwner ? "owner" : "collaborator",
+			// Ensure dueDate and dueTime are returned
+			dueDate: updatedGoal.dueDate,
+			dueTime: updatedGoal.dueTime,
+			deadline: updatedGoal.deadline?.toISOString?.(),
+			createdAt: updatedGoal.createdAt?.toISOString?.(),
+			updatedAt: updatedGoal.updatedAt?.toISOString?.(),
+		};
+
+		console.log("✅ Updated goal response:", {
+			id: responseGoal.id,
+			dueDate: responseGoal.dueDate,
+			dueTime: responseGoal.dueTime,
+			deadline: responseGoal.deadline,
 		});
+
+		return NextResponse.json(responseGoal);
 	} catch (error: any) {
+		console.error("❌ PATCH goal error:", error);
+
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
 				{ error: { message: "Unauthorized" } },
@@ -111,9 +206,14 @@ export async function PATCH(
 			);
 		}
 
-		console.error("Update goal error:", error);
 		return NextResponse.json(
-			{ error: { message: "Server error" } },
+			{
+				error: {
+					message: "Server error",
+					details:
+						process.env.NODE_ENV === "development" ? error.message : undefined,
+				},
+			},
 			{ status: 500 }
 		);
 	}
