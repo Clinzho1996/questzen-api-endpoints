@@ -36,25 +36,65 @@ export async function POST(request: NextRequest) {
 		const timestamp = new Date();
 		const invitationId = uuidv4();
 
-		// Get inviter's details
-		const inviterData = await db
+		// FIXED: Get inviter's details - try multiple ways
+		let inviterData = null;
+
+		// Try by firebaseUid first (for Firebase users)
+		inviterData = await db
 			.collection("users")
 			.findOne(
 				{ firebaseUid: inviter.userId },
-				{ projection: { displayName: 1, email: 1, photoURL: 1 } }
+				{ projection: { displayName: 1, email: 1, photoURL: 1, _id: 1 } }
 			);
 
+		// If not found by firebaseUid, try by _id (for MongoDB users)
+		if (!inviterData) {
+			try {
+				// Try converting to ObjectId
+				const objectId = new ObjectId(inviter.userId);
+				inviterData = await db
+					.collection("users")
+					.findOne(
+						{ _id: objectId },
+						{ projection: { displayName: 1, email: 1, photoURL: 1, _id: 1 } }
+					);
+			} catch {
+				// If not ObjectId, try as string
+				inviterData = await db
+					.collection("users")
+					.findOne({ _id: inviter.userId } as any, {
+						projection: { displayName: 1, email: 1, photoURL: 1, _id: 1 },
+					});
+			}
+		}
+
+		// If still not found, try by email (last resort)
+		if (!inviterData && inviterEmail) {
+			inviterData = await db
+				.collection("users")
+				.findOne(
+					{ email: inviterEmail.toLowerCase().trim() },
+					{ projection: { displayName: 1, email: 1, photoURL: 1, _id: 1 } }
+				);
+		}
+
+		// Use provided data or fallback
 		const inviterDisplayName =
 			inviterName || inviterData?.displayName || "QuestZen User";
 		const inviterDisplayEmail = inviterEmail || inviterData?.email || "";
+		const inviterId = inviterData?._id?.toString() || inviter.userId;
 
-		// Get quest details
-		const quest = await db
-			.collection("goals")
-			.findOne(
-				{ _id: questId },
-				{ projection: { title: 1, category: 1, description: 1, dueDate: 1 } }
-			);
+		// Get quest details - handle both ObjectId and string
+		let questIdFilter;
+		try {
+			questIdFilter = { _id: new ObjectId(questId) };
+		} catch {
+			questIdFilter = { _id: questId } as any;
+		}
+
+		const quest = await db.collection("goals").findOne(questIdFilter, {
+			projection: { title: 1, category: 1, description: 1, dueDate: 1 },
+		});
 
 		const questDetails = {
 			title: questTitle,
@@ -89,7 +129,7 @@ export async function POST(request: NextRequest) {
 
 					// Create notification for existing user
 					await db.collection("notifications").insertOne({
-						_id: notificationId as unknown as ObjectId,
+						_id: notificationId as any,
 						userId: existingUser.firebaseUid || existingUser._id.toString(),
 						type: "collaboration_invite",
 						title: "🎯 Collaboration Invitation",
@@ -97,7 +137,7 @@ export async function POST(request: NextRequest) {
 						data: {
 							questId,
 							questTitle: questDetails.title,
-							inviterId: inviter.userId,
+							inviterId: inviterId,
 							inviterName: inviterDisplayName,
 							inviterEmail: inviterDisplayEmail,
 							invitationId,
@@ -108,14 +148,29 @@ export async function POST(request: NextRequest) {
 						expiresAt: new Date(timestamp.getTime() + 30 * 24 * 60 * 60 * 1000), // 30 days
 					});
 
+					// Create invitation record
+					await db.collection("collaboration_invitations").insertOne({
+						_id: invitationId as any,
+						questId,
+						questTitle: questDetails.title,
+						inviterId: inviterId,
+						inviterName: inviterDisplayName,
+						inviterEmail: inviterDisplayEmail,
+						inviteeEmail: email,
+						inviteeId: existingUser.firebaseUid || existingUser._id.toString(),
+						status: "pending",
+						createdAt: timestamp,
+						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000), // 7 days
+					});
+
 					results.existingUsers.push(email);
 				} else {
 					// User doesn't exist - create pending invitation
 					await db.collection("pending_invitations").insertOne({
-						_id: invitationId as unknown as ObjectId,
+						_id: invitationId as any,
 						questId,
 						questTitle: questDetails.title,
-						inviterId: inviter.userId,
+						inviterId: inviterId,
 						inviterName: inviterDisplayName,
 						inviterEmail: inviterDisplayEmail,
 						inviteeEmail: email,
@@ -151,31 +206,21 @@ export async function POST(request: NextRequest) {
 		}
 
 		// Update quest with collaboration info
-		await db.collection("goals").updateOne(
-			{ _id: questId },
-			{
-				$addToSet: {
-					pendingInvitations: {
-						$each: results.sentEmails.map((email) => ({
-							email,
-							invitationId,
-							invitedAt: timestamp,
-						})),
-					},
+		await db.collection("goals").updateOne(questIdFilter, {
+			$addToSet: {
+				pendingInvitations: {
+					$each: results.sentEmails.map((email) => ({
+						email,
+						invitationId,
+						invitedAt: timestamp,
+					})),
 				},
-				$set: {
-					isCollaborative: true,
-					updatedAt: timestamp,
-				},
-			}
-		);
-
-		// If this is a collaborative quest, ensure it's marked as such
-		if (results.sentEmails.length > 0) {
-			await db
-				.collection("goals")
-				.updateOne({ _id: questId }, { $set: { isCollaborative: true } });
-		}
+			},
+			$set: {
+				isCollaborative: true,
+				updatedAt: timestamp,
+			},
+		});
 
 		const response = NextResponse.json({
 			success: true,
@@ -194,6 +239,11 @@ export async function POST(request: NextRequest) {
 				errors: results.errors,
 			},
 			invitationId,
+			inviter: {
+				id: inviterId,
+				name: inviterDisplayName,
+				email: inviterDisplayEmail,
+			},
 		});
 
 		// Add CORS headers
