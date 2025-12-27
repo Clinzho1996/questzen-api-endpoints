@@ -10,25 +10,63 @@ export async function POST(request: NextRequest) {
 		console.log("🔄 Syncing user to MongoDB:", {
 			userId: user.userId,
 			email: user.email,
+			provider: user.provider,
 		});
 
-		// Check if user already exists
-		const existingUser = await db
+		// Check if user already exists by firebaseUid
+		let existingUser = await db
 			.collection("users")
 			.findOne(
 				{ firebaseUid: user.userId },
 				{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
 			);
 
+		// If not found by firebaseUid, check by email
+		if (!existingUser && user.email) {
+			existingUser = await db
+				.collection("users")
+				.findOne(
+					{ email: user.email },
+					{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
+				);
+
+			// If found by email but no firebaseUid, update it
+			if (existingUser && !existingUser.firebaseUid) {
+				await db
+					.collection("users")
+					.updateOne(
+						{ _id: existingUser._id },
+						{ $set: { firebaseUid: user.userId } }
+					);
+				console.log("🔗 Linked existing user to Firebase UID");
+			}
+		}
+
 		if (existingUser) {
-			console.log("✅ User already exists in MongoDB");
+			console.log("✅ User already exists in MongoDB:", existingUser.email);
+
+			// Update with latest info if needed
+			const updates: any = {
+				updatedAt: new Date(),
+			};
+
+			if (user.email && !existingUser.email) {
+				updates.email = user.email;
+			}
+
+			if (Object.keys(updates).length > 1) {
+				await db
+					.collection("users")
+					.updateOne({ _id: existingUser._id }, { $set: updates });
+			}
+
 			return NextResponse.json({
 				success: true,
 				user: {
 					...existingUser,
 					id: existingUser._id.toString(),
 				},
-				message: "User already synced",
+				message: "User already exists",
 			});
 		}
 
@@ -44,10 +82,11 @@ export async function POST(request: NextRequest) {
 			totalFocusMinutes: 0,
 			level: 1,
 			xp: 0,
+			completedGoals: 0,
 			achievements: [],
 			createdAt: new Date(),
 			updatedAt: new Date(),
-			provider: user.provider || "google", // Track auth provider
+			provider: user.provider || "google",
 		};
 
 		const result = await db.collection("users").insertOne(newUser);
