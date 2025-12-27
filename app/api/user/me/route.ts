@@ -16,7 +16,10 @@ export async function OPTIONS(request: NextRequest) {
 	if (allowedOrigins.includes(origin)) {
 		response.headers.set("Access-Control-Allow-Origin", origin);
 	}
-	response.headers.set("Access-Control-Allow-Methods", "GET, PATCH, OPTIONS");
+	response.headers.set(
+		"Access-Control-Allow-Methods",
+		"GET, PATCH, OPTIONS, DELETE, PUT"
+	);
 	response.headers.set(
 		"Access-Control-Allow-Headers",
 		"Content-Type, Authorization"
