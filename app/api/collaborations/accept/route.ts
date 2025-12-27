@@ -64,19 +64,17 @@ export async function POST(request: NextRequest) {
 			try {
 				const objectId = new ObjectId(user.userId);
 				lookupMethods.push(
-					db
-						.collection("users")
-						.findOne(
-							{ _id: objectId },
-							{
-								projection: {
-									email: 1,
-									displayName: 1,
-									_id: 1,
-									firebaseUid: 1,
-								},
-							}
-						)
+					db.collection("users").findOne(
+						{ _id: objectId },
+						{
+							projection: {
+								email: 1,
+								displayName: 1,
+								_id: 1,
+								firebaseUid: 1,
+							},
+						}
+					)
 				);
 			} catch {
 				// ignore invalid ObjectId
@@ -132,22 +130,89 @@ export async function POST(request: NextRequest) {
 		// ============================================
 		// 2. FIND INVITATION
 		// ============================================
+		// In app/api/collaborations/accept/route.ts, update the invitation lookup:
+
+		// ============================================
+		// 2. FIND INVITATION
+		// ============================================
 		console.log("🔍 Looking for invitation...");
 
-		let invitation = await db.collection("collaboration_invitations").findOne({
-			_id: invitationId as any,
-			status: "pending",
-		});
+		// Try to find in both collections with different ID types
+		let invitation = null;
 
+		// First try: If it looks like ObjectId (24 hex chars)
+		if (/^[0-9a-fA-F]{24}$/.test(invitationId)) {
+			try {
+				invitation = await db.collection("collaboration_invitations").findOne({
+					_id: new ObjectId(invitationId),
+					status: "pending",
+				});
+
+				if (!invitation) {
+					invitation = await db.collection("pending_invitations").findOne({
+						_id: new ObjectId(invitationId),
+						status: "pending",
+					});
+				}
+			} catch (error) {
+				console.log("⚠️ Not a valid ObjectId, trying as string...");
+			}
+		}
+
+		// Second try: If not found or not ObjectId, try as string (UUID)
 		if (!invitation) {
-			invitation = await db.collection("pending_invitations").findOne({
-				_id: invitationId as any,
+			console.log("🔍 Trying to find invitation as string/UUID...");
+
+			invitation = await db.collection("collaboration_invitations").findOne({
+				_id: invitationId,
 				status: "pending",
 			});
+
+			if (!invitation) {
+				invitation = await db.collection("pending_invitations").findOne({
+					_id: invitationId,
+					status: "pending",
+				});
+			}
+
+			// Third try: Look for invitation by invitationId field (if _id is different)
+			if (!invitation) {
+				invitation = await db.collection("collaboration_invitations").findOne({
+					invitationId: invitationId,
+					status: "pending",
+				});
+
+				if (!invitation) {
+					invitation = await db.collection("pending_invitations").findOne({
+						invitationId: invitationId,
+						status: "pending",
+					});
+				}
+			}
 		}
 
 		if (!invitation) {
 			console.error("❌ Invitation not found:", invitationId);
+
+			// Debug: List available invitations
+			const allInvitations = await db
+				.collection("collaboration_invitations")
+				.find({ status: "pending" })
+				.project({ _id: 1, inviteeEmail: 1, questTitle: 1 })
+				.limit(10)
+				.toArray();
+
+			console.log("📋 Available pending invitations:", allInvitations);
+
+			const pendingInvites = await db
+				.collection("pending_invitations")
+				.find({ status: "pending" })
+				.project({ _id: 1, inviteeEmail: 1, questTitle: 1 })
+				.limit(10)
+				.toArray();
+
+			console.log("📋 Available pending_invitations:", pendingInvites);
+
 			return NextResponse.json(
 				{ error: { message: "Invitation not found or already processed" } },
 				{ status: 404 }
