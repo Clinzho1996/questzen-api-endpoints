@@ -1,4 +1,3 @@
-// app/api/collaborations/accept/route.ts
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -14,7 +13,8 @@ export async function POST(request: NextRequest) {
 		console.log("🔐 Auth user from requireAuth:", {
 			userId: user.userId,
 			email: user.email,
-			firebaseUid: user.userId,
+			firebaseUid: user.firebaseUid,
+			provider: user.provider,
 		});
 
 		if (!invitationId) {
@@ -32,65 +32,77 @@ export async function POST(request: NextRequest) {
 		// ============================================
 		let currentUser = null;
 
-		// Try multiple lookup methods
-		const lookupMethods = [];
+		console.log("🔍 Looking for user with:", {
+			userIdFromAuth: user.userId,
+			emailFromAuth: user.email,
+			provider: user.provider,
+			firebaseUid: user.firebaseUid,
+		});
 
-		// Method 1: Try firebaseUid (primary)
-		if (user.userId) {
-			lookupMethods.push(
-				db
-					.collection("users")
-					.findOne(
-						{ firebaseUid: user.userId },
-						{ projection: { email: 1, displayName: 1, _id: 1, firebaseUid: 1 } }
-					)
-			);
-		}
+		// Determine what type of ID we have
+		const isFirebaseUid = user.userId && user.userId.length > 24; // Firebase UIDs are typically 28 chars
+		const isMongoId = user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId);
 
-		// Method 2: Try by email
-		if (user.email) {
-			lookupMethods.push(
-				db
-					.collection("users")
-					.findOne(
-						{ email: user.email.toLowerCase().trim() },
-						{ projection: { email: 1, displayName: 1, _id: 1, firebaseUid: 1 } }
-					)
-			);
-		}
+		console.log("📊 ID Analysis:", {
+			isFirebaseUid,
+			isMongoId,
+			userIdLength: user.userId?.length,
+		});
 
-		// Method 3: Try by _id if it looks like ObjectId
-		if (user.userId && user.userId.length === 24) {
+		if (user.provider === "firebase" || isFirebaseUid) {
+			// This is a Firebase user - look by firebaseUid
+			console.log("🔥 Looking for Firebase user with UID:", user.userId);
+			currentUser = await db.collection("users").findOne({
+				firebaseUid: user.userId,
+			});
+
+			if (!currentUser && user.firebaseUid) {
+				// Try the firebaseUid field from AuthUser
+				currentUser = await db.collection("users").findOne({
+					firebaseUid: user.firebaseUid,
+				});
+			}
+		} else if (isMongoId) {
+			// This is a MongoDB _id
+			console.log("🍃 Looking for MongoDB user with _id:", user.userId);
 			try {
-				const objectId = new ObjectId(user.userId);
-				lookupMethods.push(
-					db.collection("users").findOne(
-						{ _id: objectId },
-						{
-							projection: {
-								email: 1,
-								displayName: 1,
-								_id: 1,
-								firebaseUid: 1,
-							},
-						}
-					)
-				);
-			} catch {
-				// ignore invalid ObjectId
+				currentUser = await db.collection("users").findOne({
+					_id: new ObjectId(user.userId),
+				});
+			} catch (error) {
+				console.error("❌ Error converting to ObjectId:", error);
 			}
 		}
 
-		// Wait for all lookups
-		const results = await Promise.all(lookupMethods);
-		currentUser = results.find((result) => result !== null) || null;
+		// If still not found, try by email
+		if (!currentUser && user.email) {
+			console.log("📧 Looking for user by email:", user.email);
+			currentUser = await db.collection("users").findOne({
+				email: user.email.toLowerCase().trim(),
+			});
+
+			// If found by email but doesn't have firebaseUid, update it
+			if (currentUser && !currentUser.firebaseUid && user.firebaseUid) {
+				console.log("🔄 Updating user with firebaseUid");
+				await db.collection("users").updateOne(
+					{ _id: currentUser._id },
+					{
+						$set: {
+							firebaseUid: user.firebaseUid,
+							updatedAt: timestamp,
+						},
+					}
+				);
+				currentUser.firebaseUid = user.firebaseUid;
+			}
+		}
 
 		// If user not found, create them
 		if (!currentUser) {
 			console.log("🔄 User not found in MongoDB, creating new user...");
 
 			const newUser = {
-				firebaseUid: user.userId,
+				firebaseUid: user.firebaseUid || user.userId,
 				email: user.email || "",
 				displayName: user.email?.split("@")[0] || "QuestZen User",
 				photoURL: "",
@@ -108,9 +120,9 @@ export async function POST(request: NextRequest) {
 			const result = await db.collection("users").insertOne(newUser);
 			currentUser = {
 				_id: result.insertedId,
-				firebaseUid: user.userId,
-				email: user.email || "",
-				displayName: user.email?.split("@")[0] || "QuestZen User",
+				firebaseUid: newUser.firebaseUid,
+				email: newUser.email,
+				displayName: newUser.displayName,
 			};
 
 			console.log("✅ Created new user:", currentUser);
@@ -123,25 +135,38 @@ export async function POST(request: NextRequest) {
 			});
 		}
 
-		// Get user IDs in all formats for database queries
+		// Get user IDs - prefer firebaseUid for userIdString
 		const userIdString = currentUser.firebaseUid || currentUser._id.toString();
 		const userIdObjectId = currentUser._id;
 
-		// ============================================
-		// 2. FIND INVITATION
-		// ============================================
-		// In app/api/collaborations/accept/route.ts, update the invitation lookup:
+		console.log("🎯 Using IDs:", {
+			userIdString,
+			userIdObjectId: userIdObjectId?.toString(),
+		});
 
 		// ============================================
 		// 2. FIND INVITATION
 		// ============================================
 		console.log("🔍 Looking for invitation...");
 
-		// Try to find in both collections with different ID types
 		let invitation = null;
 
-		// First try: If it looks like ObjectId (24 hex chars)
-		if (/^[0-9a-fA-F]{24}$/.test(invitationId)) {
+		// First try: Look in collaboration_invitations by _id
+		invitation = await db.collection("collaboration_invitations").findOne({
+			_id: invitationId,
+			status: "pending",
+		});
+
+		// Second try: Look in pending_invitations by _id
+		if (!invitation) {
+			invitation = await db.collection("pending_invitations").findOne({
+				_id: invitationId,
+				status: "pending",
+			});
+		}
+
+		// Third try: Try as ObjectId if it looks like one
+		if (!invitation && /^[0-9a-fA-F]{24}$/.test(invitationId)) {
 			try {
 				invitation = await db.collection("collaboration_invitations").findOne({
 					_id: new ObjectId(invitationId),
@@ -155,63 +180,12 @@ export async function POST(request: NextRequest) {
 					});
 				}
 			} catch (error) {
-				console.log("⚠️ Not a valid ObjectId, trying as string...");
-			}
-		}
-
-		// Second try: If not found or not ObjectId, try as string (UUID)
-		if (!invitation) {
-			console.log("🔍 Trying to find invitation as string/UUID...");
-
-			invitation = await db.collection("collaboration_invitations").findOne({
-				_id: invitationId,
-				status: "pending",
-			});
-
-			if (!invitation) {
-				invitation = await db.collection("pending_invitations").findOne({
-					_id: invitationId,
-					status: "pending",
-				});
-			}
-
-			// Third try: Look for invitation by invitationId field (if _id is different)
-			if (!invitation) {
-				invitation = await db.collection("collaboration_invitations").findOne({
-					invitationId: invitationId,
-					status: "pending",
-				});
-
-				if (!invitation) {
-					invitation = await db.collection("pending_invitations").findOne({
-						invitationId: invitationId,
-						status: "pending",
-					});
-				}
+				console.log("⚠️ Not a valid ObjectId");
 			}
 		}
 
 		if (!invitation) {
 			console.error("❌ Invitation not found:", invitationId);
-
-			// Debug: List available invitations
-			const allInvitations = await db
-				.collection("collaboration_invitations")
-				.find({ status: "pending" })
-				.project({ _id: 1, inviteeEmail: 1, questTitle: 1 })
-				.limit(10)
-				.toArray();
-
-			console.log("📋 Available pending invitations:", allInvitations);
-
-			const pendingInvites = await db
-				.collection("pending_invitations")
-				.find({ status: "pending" })
-				.project({ _id: 1, inviteeEmail: 1, questTitle: 1 })
-				.limit(10)
-				.toArray();
-
-			console.log("📋 Available pending_invitations:", pendingInvites);
 
 			return NextResponse.json(
 				{ error: { message: "Invitation not found or already processed" } },
@@ -266,24 +240,27 @@ export async function POST(request: NextRequest) {
 		if (invitation.token) {
 			// pending_invitations
 			await db.collection("pending_invitations").updateOne(
-				{ _id: invitationId as any },
+				{ _id: invitation._id },
 				{
 					$set: {
 						status: "accepted",
 						acceptedAt: timestamp,
 						updatedAt: timestamp,
 						inviteeId: userIdString,
+						inviteeMongoId: currentUser._id.toString(),
 					},
 				}
 			);
 		} else {
 			await db.collection("collaboration_invitations").updateOne(
-				{ _id: invitationId as any },
+				{ _id: invitation._id },
 				{
 					$set: {
 						status: "accepted",
 						acceptedAt: timestamp,
 						updatedAt: timestamp,
+						inviteeId: userIdString,
+						inviteeMongoId: currentUser._id.toString(),
 					},
 				}
 			);
@@ -305,6 +282,7 @@ export async function POST(request: NextRequest) {
 		// Update the goal to add collaborator
 		const collaboratorData = {
 			userId: userIdString,
+			mongoUserId: currentUser._id.toString(),
 			email: currentUser.email,
 			displayName: currentUser.displayName,
 			joinedAt: timestamp,
@@ -314,10 +292,21 @@ export async function POST(request: NextRequest) {
 		await db.collection("goals").updateOne(questIdFilter, {
 			$addToSet: {
 				collaborators: collaboratorData,
+				accessibleTo: {
+					$each: [
+						userIdString, // firebaseUid
+						currentUser._id.toString(), // MongoDB _id as string
+						currentUser._id, // ObjectId
+					].filter(Boolean),
+				},
 			},
 			$pull: {
 				pendingInvitations: {
-					$or: [{ email: currentUser.email }, { invitationId: invitationId }],
+					$or: [
+						{ email: currentUser.email },
+						{ invitationId: invitationId },
+						{ _id: invitationId },
+					],
 				},
 			} as any,
 			$set: {
@@ -334,13 +323,17 @@ export async function POST(request: NextRequest) {
 		// Create user_goals entry if collection exists
 		try {
 			const userGoalExists = await db.collection("user_goals").findOne({
-				userId: userIdString,
+				$or: [
+					{ userId: userIdString },
+					{ mongoUserId: currentUser._id.toString() },
+				],
 				goalId: invitation.questId,
 			});
 
 			if (!userGoalExists) {
 				await db.collection("user_goals").insertOne({
 					userId: userIdString,
+					mongoUserId: currentUser._id.toString(),
 					goalId: invitation.questId,
 					role: "collaborator",
 					addedAt: timestamp,
@@ -348,21 +341,14 @@ export async function POST(request: NextRequest) {
 					isCollaborative: true,
 					inviterId: invitation.inviterId,
 					inviterName: invitation.inviterName,
+					inviterEmail: invitation.inviterEmail,
 					notificationRead: false,
 				});
 				console.log("✅ Added to user_goals collection");
 			}
 		} catch (error) {
 			console.log("ℹ️ user_goals collection doesn't exist or error:", error);
-			// Continue anyway - we'll handle this in the goals API
 		}
-
-		// Also add accessibleTo field for backup
-		await db.collection("goals").updateOne(questIdFilter, {
-			$addToSet: {
-				accessibleTo: userIdString,
-			},
-		});
 
 		// ============================================
 		// 7. CREATE NOTIFICATIONS
@@ -463,6 +449,7 @@ export async function POST(request: NextRequest) {
 			},
 			collaborator: {
 				userId: userIdString,
+				mongoUserId: currentUser._id.toString(),
 				email: currentUser.email,
 				displayName: currentUser.displayName,
 			},
