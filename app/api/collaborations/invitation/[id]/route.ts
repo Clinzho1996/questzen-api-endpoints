@@ -1,58 +1,47 @@
-// For Next.js 15+ with async params
+// app/api/collaborations/invitation/[id]/route.ts
 import { getDatabase } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-// Generate static params (optional)
-export async function generateStaticParams() {
-	return []; // Return empty array or actual IDs if you want static generation
-}
+// Important: Export the config to mark as dynamic
+export const dynamic = "force-dynamic"; // Prevents static generation
+export const fetchCache = "force-no-store";
 
-// CORRECT for Next.js 15+: Await the params
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: Promise<{ id: string }> }
+	{ params }: { params: { id: string } } // Correct: params is NOT a Promise
 ) {
 	try {
-		// Await the params Promise
-		const resolvedParams = await params;
-		const { id: invitationId } = resolvedParams;
+		// Extract id directly from params (no await needed)
+		const { id } = params;
 
-		console.log("✅ Correctly extracted invitation ID:", invitationId);
+		console.log("✅ Extracted invitation ID:", id);
+		console.log("🔗 Full URL:", request.url);
 
-		if (!invitationId || invitationId === "undefined") {
+		if (!id || id === "undefined") {
+			console.error("❌ Invalid invitation ID:", id);
 			return NextResponse.json(
-				{ error: { message: "Invitation ID is required" } },
+				{ error: { message: "Invalid invitation link" } },
 				{ status: 400 }
 			);
 		}
 
 		const db = await getDatabase();
-		const now = new Date();
 
-		console.log("🔍 Looking for invitation ID:", invitationId);
-
-		// SIMPLE DIRECT QUERY - Since we know it's a string
+		// Simple direct query
 		let invitation = await db.collection("collaboration_invitations").findOne({
-			_id: invitationId,
+			_id: id,
 		} as any);
 
-		console.log("🔍 Query result:", invitation);
-
 		if (!invitation) {
-			console.log("❌ Not found in collaboration_invitations");
 			invitation = await db.collection("pending_invitations").findOne({
-				_id: invitationId,
+				_id: id,
 			} as any);
-			console.log("🔍 Pending invitations query result:", invitation);
 		}
 
 		if (!invitation) {
+			console.error("❌ Invitation not found in database for ID:", id);
 			return NextResponse.json(
-				{
-					error: {
-						message: "Invitation not found. Please check the invitation link.",
-					},
-				},
+				{ error: { message: "Invitation not found or expired" } },
 				{ status: 404 }
 			);
 		}
@@ -61,29 +50,8 @@ export async function GET(
 			id: invitation._id,
 			questId: invitation.questId,
 			status: invitation.status,
+			inviteeEmail: invitation.inviteeEmail,
 		});
-
-		// Check if invitation is expired
-		if (invitation.expiresAt && new Date(invitation.expiresAt) < now) {
-			return NextResponse.json(
-				{
-					error: { message: "Invitation has expired" },
-					invitation: { ...invitation, status: "expired" },
-				},
-				{ status: 410 }
-			);
-		}
-
-		// Check if already accepted
-		if (invitation.status === "accepted") {
-			return NextResponse.json(
-				{
-					error: { message: "Invitation already accepted" },
-					invitation,
-				},
-				{ status: 409 }
-			);
-		}
 
 		// Get quest details
 		const quest = await db
@@ -126,7 +94,7 @@ export async function GET(
 
 		const response = NextResponse.json(responseData);
 
-		// Add CORS headers
+		// CORS headers
 		const origin = request.headers.get("origin") || "";
 		const allowedOrigins = [
 			"https://questzenai.devclinton.org",
@@ -141,7 +109,7 @@ export async function GET(
 
 		return response;
 	} catch (error: any) {
-		console.error("Get invitation error:", error);
+		console.error("❌ Get invitation error:", error);
 		return NextResponse.json(
 			{ error: { message: "Server error", details: error.message } },
 			{ status: 500 }
@@ -149,9 +117,8 @@ export async function GET(
 	}
 }
 
-// OPTIONS handler
 export async function OPTIONS(request: NextRequest) {
-	const origin = request.headers.get("origin") || "http://localhost:5173";
+	const origin = request.headers.get("origin") || "";
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
 		"http://localhost:5173",
@@ -160,7 +127,7 @@ export async function OPTIONS(request: NextRequest) {
 
 	const response = new NextResponse(null, { status: 200 });
 
-	if (allowedOrigins.includes(origin)) {
+	if (allowedOrigins.includes(origin) || origin.includes("localhost")) {
 		response.headers.set("Access-Control-Allow-Origin", origin);
 	}
 	response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -170,7 +137,6 @@ export async function OPTIONS(request: NextRequest) {
 	);
 	response.headers.set("Access-Control-Allow-Credentials", "true");
 	response.headers.set("Access-Control-Max-Age", "86400");
-	response.headers.set("Cache-Control", "no-store, max-age=0");
 
 	return response;
 }
