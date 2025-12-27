@@ -2,36 +2,8 @@ import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-// Handle OPTIONS request for CORS preflight
-export async function OPTIONS(request: NextRequest) {
-	const origin = request.headers.get("origin") || "http://localhost:5173";
-	const allowedOrigins = [
-		"https://questzenai.devclinton.org",
-		"http://localhost:5173",
-		"http://localhost:3000",
-	];
-
-	const response = new NextResponse(null, { status: 200 });
-
-	if (allowedOrigins.includes(origin)) {
-		response.headers.set("Access-Control-Allow-Origin", origin);
-	}
-	response.headers.set(
-		"Access-Control-Allow-Methods",
-		"GET, PATCH, OPTIONS, DELETE, PUT"
-	);
-	response.headers.set(
-		"Access-Control-Allow-Headers",
-		"Content-Type, Authorization"
-	);
-	response.headers.set("Access-Control-Allow-Credentials", "true");
-	response.headers.set("Access-Control-Max-Age", "86400");
-
-	// ⭐ ADD THIS LINE: Prevent caching of OPTIONS response
-	response.headers.set("Cache-Control", "no-store, max-age=0");
-
-	return response;
-}
+// For App Router, we export named HTTP methods
+// The route handler automatically handles different methods
 
 export async function GET(request: NextRequest) {
 	try {
@@ -180,4 +152,34 @@ export async function PUT(request: NextRequest) {
 			{ status: 500 }
 		);
 	}
+}
+
+// In App Router, OPTIONS is handled automatically by Next.js
+// But you can still override it if needed
+export async function OPTIONS(request: NextRequest) {
+	const origin = request.headers.get("origin") || "http://localhost:5173";
+	const allowedOrigins = [
+		"https://questzenai.devclinton.org",
+		"http://localhost:5173",
+		"http://localhost:3000",
+	];
+
+	const response = new NextResponse(null, { status: 200 });
+
+	if (allowedOrigins.includes(origin)) {
+		response.headers.set("Access-Control-Allow-Origin", origin);
+	}
+	response.headers.set(
+		"Access-Control-Allow-Methods",
+		"GET, PUT, OPTIONS, POST, DELETE, PATCH"
+	);
+	response.headers.set(
+		"Access-Control-Allow-Headers",
+		"Content-Type, Authorization"
+	);
+	response.headers.set("Access-Control-Allow-Credentials", "true");
+	response.headers.set("Access-Control-Max-Age", "86400");
+	response.headers.set("Cache-Control", "no-store, max-age=0");
+
+	return response;
 }
