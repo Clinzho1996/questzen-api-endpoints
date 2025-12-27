@@ -288,7 +288,14 @@ export async function POST(request: NextRequest) {
 				firebaseUid: user.userId,
 				email: user.email || "",
 				displayName: user.email?.split("@")[0] || "QuestZen User",
-				// ... other fields
+				photoURL: "",
+				subscriptionTier: "free",
+				streak: 0,
+				longestStreak: 0,
+				totalFocusMinutes: 0,
+				level: 1,
+				xp: 0,
+				achievements: [],
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			};
