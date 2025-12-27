@@ -47,14 +47,12 @@ export async function POST(request: NextRequest) {
 		const db = await getDatabase();
 
 		// Find user by firebaseUid (which should match user.userId from JWT)
-		const userData = await db
-			.collection("users")
-			.findOne(
-				{ firebaseUid: user.userId },
-				{
-					projection: { _id: 1, xp: 1, level: 1, completedGoals: 1, streak: 1 },
-				}
-			);
+		const userData = await db.collection("users").findOne(
+			{ firebaseUid: user.userId },
+			{
+				projection: { _id: 1, xp: 1, level: 1, completedGoals: 1, streak: 1 },
+			}
+		);
 
 		if (!userData) {
 			return NextResponse.json(
@@ -182,7 +180,7 @@ export async function POST(request: NextRequest) {
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
-				{ error: { message: "Unauthorized" } },
+				{ error: { message: "Unauthorized access" } },
 				{ status: 401 }
 			);
 		}
