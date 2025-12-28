@@ -5,7 +5,19 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
 	try {
+		console.log("🔑 ACCEPT INVITATION REQUEST STARTED");
+		console.log("📝 Request headers:", {
+			authorization: request.headers.get("authorization"),
+			contentType: request.headers.get("content-type"),
+			origin: request.headers.get("origin"),
+		});
+
 		const user = await requireAuth(request);
+		console.log("✅ requireAuth successful:", {
+			userId: user.userId,
+			email: user.email,
+			provider: user.provider,
+		});
 		const body = await request.json();
 		const { invitationId } = body;
 
