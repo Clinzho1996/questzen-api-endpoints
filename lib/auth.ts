@@ -11,6 +11,7 @@ if (!process.env.JWT_SECRET) {
 export interface AuthUser {
 	userId: string; // Can be firebaseUid OR MongoDB _id
 	email: string;
+	photoURL?: string;
 	subscriptionTier: "free" | "premium";
 	provider?: string; // Make optional
 	firebaseUid?: string; // Make optional

@@ -38,57 +38,26 @@ export async function POST(request: NextRequest) {
 		// Get inviter's details
 		let inviterData = null;
 
-		// Try by firebaseUid first (for Firebase users)
-		inviterData = await db.collection("users").findOne(
-			{ firebaseUid: inviter.userId },
-			{
-				projection: {
-					displayName: 1,
-					email: 1,
-					photoURL: 1,
-					_id: 1,
-					firebaseUid: 1,
-				},
-			}
-		);
-
-		// If not found by firebaseUid, try by _id (for MongoDB users)
-		if (!inviterData) {
-			try {
-				// Try converting to ObjectId
-				const objectId = new ObjectId(inviter.userId);
-				inviterData = await db.collection("users").findOne(
-					{ _id: objectId },
-					{
-						projection: {
-							displayName: 1,
-							email: 1,
-							photoURL: 1,
-							_id: 1,
-							firebaseUid: 1,
-						},
-					}
-				);
-			} catch {
-				// If not ObjectId, try as string
-				inviterData = await db
-					.collection("users")
-					.findOne({ _id: inviter.userId } as any, {
-						projection: {
-							displayName: 1,
-							email: 1,
-							photoURL: 1,
-							_id: 1,
-							firebaseUid: 1,
-						},
-					});
-			}
+		// Simplify: Always look by email first (most reliable)
+		if (inviter.email) {
+			inviterData = await db.collection("users").findOne(
+				{ email: inviter.email.toLowerCase().trim() },
+				{
+					projection: {
+						displayName: 1,
+						email: 1,
+						photoURL: 1,
+						_id: 1,
+						firebaseUid: 1,
+					},
+				}
+			);
 		}
 
-		// If still not found, try by email (last resort)
-		if (!inviterData && inviterEmail) {
+		// If not found by email, try firebaseUid
+		if (!inviterData && inviter.userId) {
 			inviterData = await db.collection("users").findOne(
-				{ email: inviterEmail.toLowerCase().trim() },
+				{ firebaseUid: inviter.userId },
 				{
 					projection: {
 						displayName: 1,
@@ -104,11 +73,9 @@ export async function POST(request: NextRequest) {
 		// Use provided data or fallback
 		const inviterDisplayName =
 			inviterName || inviterData?.displayName || "QuestZen User";
-		const inviterDisplayEmail = inviterEmail || inviterData?.email || "";
-		const inviterId =
-			inviterData?.firebaseUid ||
-			inviterData?._id?.toString() ||
-			inviter.userId;
+		const inviterDisplayEmail =
+			inviterEmail || inviterData?.email || inviter.email || "";
+		const inviterId = inviterData?.firebaseUid || inviter.userId;
 		const inviterMongoId = inviterData?._id;
 
 		console.log("👤 Inviter details:", {
@@ -133,7 +100,7 @@ export async function POST(request: NextRequest) {
 				category: 1,
 				description: 1,
 				dueDate: 1,
-				userId: 1,
+				userId: 1, // Owner ID
 				collaborators: 1,
 			},
 		});
@@ -142,6 +109,19 @@ export async function POST(request: NextRequest) {
 			return NextResponse.json(
 				{ error: { message: "Quest not found" } },
 				{ status: 404 }
+			);
+		}
+
+		// Verify the current user is the quest owner
+		if (
+			quest.userId !== inviterId &&
+			!quest.collaborators?.some(
+				(c: any) => c.userId === inviterId && c.role === "owner"
+			)
+		) {
+			return NextResponse.json(
+				{ error: { message: "Only quest owners can invite collaborators" } },
+				{ status: 403 }
 			);
 		}
 
@@ -184,17 +164,21 @@ export async function POST(request: NextRequest) {
 						firebaseUid: existingUser.firebaseUid,
 					});
 
+					// IMPORTANT FIX: Use the invitee's ID, not the inviter's
+					const inviteeId =
+						existingUser.firebaseUid || existingUser._id.toString();
+
 					// Create invitation record for existing user
 					const invitationData = {
 						_id: invitationId,
 						questId,
 						questTitle: questDetails.title,
-						inviterId: inviterId,
+						inviterId: inviterId, // Sender's ID
 						inviterMongoId: inviterMongoId,
 						inviterName: inviterDisplayName,
 						inviterEmail: inviterDisplayEmail,
 						inviteeEmail: cleanEmail,
-						inviteeId: existingUser.firebaseUid || existingUser._id.toString(),
+						inviteeId: inviteeId, // Recipient's ID - CRITICAL FIX
 						inviteeMongoId: existingUser._id,
 						status: "pending",
 						createdAt: timestamp,
@@ -209,7 +193,7 @@ export async function POST(request: NextRequest) {
 					const notificationId = uuidv4();
 					await db.collection("notifications").insertOne({
 						_id: notificationId as any,
-						userId: existingUser.firebaseUid || existingUser._id.toString(),
+						userId: inviteeId, // Use invitee's ID
 						type: "collaboration_invite",
 						title: "🎯 Collaboration Invitation",
 						message: `${inviterDisplayName} invited you to collaborate on "${questDetails.title}"`,
@@ -379,7 +363,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function OPTIONS(request: NextRequest) {
-	const origin = request.headers.get("origin") || "http://localhost:5173";
+	const origin = request.headers.get("origin") || "";
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
 		"http://localhost:5173",
