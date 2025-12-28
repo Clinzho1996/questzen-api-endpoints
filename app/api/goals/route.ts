@@ -1,4 +1,3 @@
-// app/api/goals/route.ts - COMPLETE FIXED GET HANDLER
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -14,27 +13,73 @@ export async function GET(request: NextRequest) {
 			userId: user.userId,
 			email: user.email,
 			firebaseUid: user.firebaseUid,
+			provider: user.provider,
+			isMongoDBId: /^[0-9a-fA-F]{24}$/.test(user.userId),
 		});
 
-		// Get current user from MongoDB
-		let currentUser = await db.collection("users").findOne(
-			{
-				$or: [
-					{ firebaseUid: user.userId },
-					{ _id: new ObjectId(user.userId) },
-					{ email: user.email },
-				],
-			},
-			{
-				projection: {
-					_id: 1,
-					firebaseUid: 1,
-					email: 1,
-					displayName: 1,
-					photoURL: 1,
-				},
+		// Get current user from MongoDB - UPDATED FOR CUSTOM JWT
+		let currentUser = null;
+
+		// Priority 1: Look by MongoDB _id if userId is MongoDB ID
+		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
+			try {
+				currentUser = await db
+					.collection("users")
+					.findOne(
+						{ _id: new ObjectId(user.userId) },
+						{
+							projection: {
+								_id: 1,
+								firebaseUid: 1,
+								email: 1,
+								displayName: 1,
+								photoURL: 1,
+							},
+						}
+					);
+				console.log("✅ Found user by MongoDB _id");
+			} catch (error) {
+				console.log("⚠️ Invalid ObjectId format for user lookup");
 			}
-		);
+		}
+
+		// Priority 2: Look by firebaseUid
+		if (!currentUser && user.userId) {
+			currentUser = await db
+				.collection("users")
+				.findOne(
+					{ firebaseUid: user.userId },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
+			console.log("✅ Found user by firebaseUid");
+		}
+
+		// Priority 3: Look by email
+		if (!currentUser && user.email) {
+			currentUser = await db
+				.collection("users")
+				.findOne(
+					{ email: user.email.toLowerCase().trim() },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
+			console.log("✅ Found user by email");
+		}
 
 		if (!currentUser) {
 			console.log("🔄 Creating new user...");
@@ -57,11 +102,12 @@ export async function GET(request: NextRequest) {
 			const result = await db.collection("users").insertOne(newUser);
 			currentUser = {
 				_id: result.insertedId,
-				firebaseUid: user.userId,
-				email: user.email || "",
+				firebaseUid: newUser.firebaseUid,
+				email: newUser.email,
 				displayName: newUser.displayName,
 				photoURL: "",
 			};
+			console.log("✅ Created new user");
 		}
 
 		// Get ALL possible identifiers for this user
@@ -85,9 +131,9 @@ export async function GET(request: NextRequest) {
 		// 1. User is owner (all possible ID formats)
 		queryConditions.push({
 			$or: [
-				{ userId: userMongoId },
-				{ userId: userFirebaseUid },
-				{ userId: userMongoIdString },
+				{ userId: userMongoId }, // ObjectId
+				{ userId: userFirebaseUid }, // Firebase UID string
+				{ userId: userMongoIdString }, // MongoDB ID string
 				{ "ownerDetails.id": userMongoIdString },
 				{ "ownerDetails.firebaseUid": userFirebaseUid },
 				{ "ownerDetails.email": userEmail },
@@ -124,32 +170,30 @@ export async function GET(request: NextRequest) {
 
 		console.log(`✅ Found ${goals.length} total goals for user`);
 
-		// Transform goals for frontend
+		// Transform goals for frontend - FIXED ROLE DETERMINATION
 		const transformedGoals = goals.map((goal) => {
-			// Get user identifiers for comparison
-			const goalUserId = goal.userId;
-			const goalUserIdString = goalUserId?.toString();
+			// Get the goal's owner ID
+			const goalOwnerId = goal.userId;
 
-			// CRITICAL FIX: Compare ALL possible user identifiers
+			// CRITICAL FIX: Determine if current user is owner
 			let isOwner = false;
 
-			// Check all possible ways the current user could be the owner
-			if (goalUserId) {
-				// Case 1: userId is ObjectId - compare with userMongoId
-				if (goalUserId instanceof ObjectId) {
-					isOwner = goalUserId.equals(userMongoId);
-				}
-				// Case 2: userId is string - compare with all user identifiers
-				else if (typeof goalUserId === "string") {
-					isOwner =
-						goalUserId === userFirebaseUid ||
-						goalUserId === userMongoIdString ||
-						goalUserId === userMongoId.toString() ||
-						goalUserId === userEmail;
-				}
+			// Case 1: goalOwnerId is ObjectId
+			if (goalOwnerId instanceof ObjectId) {
+				isOwner = goalOwnerId.equals(userMongoId);
+			}
+			// Case 2: goalOwnerId is string - could be firebaseUid or MongoDB ID string
+			else if (typeof goalOwnerId === "string") {
+				// Try all possible comparisons
+				isOwner =
+					goalOwnerId === userFirebaseUid || // Firebase UID match
+					goalOwnerId === userMongoIdString || // MongoDB ID string match
+					(goalOwnerId.length === 24 &&
+						/^[0-9a-fA-F]{24}$/.test(goalOwnerId) &&
+						new ObjectId(goalOwnerId).equals(userMongoId)); // MongoDB ObjectId comparison
 			}
 
-			// Also check if user is in ownerDetails
+			// Case 3: Check ownerDetails
 			if (!isOwner && goal.ownerDetails) {
 				isOwner =
 					goal.ownerDetails.id === userMongoIdString ||
@@ -157,7 +201,7 @@ export async function GET(request: NextRequest) {
 					goal.ownerDetails.email === userEmail;
 			}
 
-			// Check if user is collaborator
+			// Determine if user is collaborator
 			let isCollaborator = false;
 			if (goal.collaborators) {
 				isCollaborator = goal.collaborators.some(
@@ -169,7 +213,7 @@ export async function GET(request: NextRequest) {
 				);
 			}
 
-			// CRITICAL FIX: Determine role - prioritize owner over collaborator
+			// Determine role - OWNER TAKES PRIORITY
 			const role = isOwner
 				? "owner"
 				: isCollaborator
@@ -178,25 +222,23 @@ export async function GET(request: NextRequest) {
 
 			// Determine if collaborative
 			const isCollaborative =
-				goal.isCollaborative ||
 				isCollaborator ||
-				(goal.collaborators && goal.collaborators.length > 0);
+				(goal.collaborators && goal.collaborators.length > 0) ||
+				goal.isCollaborative === true;
 
-			// DEBUG LOGGING
 			console.log(`Goal "${goal.title}":`, {
-				goalUserId: goalUserIdString,
-				userFirebaseUid,
-				userMongoId: userMongoIdString,
 				isOwner,
 				isCollaborator,
 				role,
-				collaborators: goal.collaborators?.length || 0,
+				isCollaborative,
+				goalOwnerId: goalOwnerId?.toString?.(),
+				userMongoId: userMongoIdString,
 			});
 
-			// Build participants array - INCLUDING CURRENT USER
-			const participants: any = [];
+			// Build participants array
+			const participants = [];
 
-			// Add owner
+			// Add owner first
 			if (goal.ownerDetails) {
 				participants.push({
 					id: goal.ownerDetails.id || goal.ownerDetails.firebaseUid,
@@ -208,17 +250,17 @@ export async function GET(request: NextRequest) {
 						)}&background=random`,
 					role: "owner",
 				});
-			} else {
+			} else if (goalOwnerId) {
 				// Fallback if no ownerDetails
 				participants.push({
-					id: goalUserIdString || "unknown",
+					id: goalOwnerId?.toString?.(),
 					name: "Goal Owner",
 					avatar: `https://ui-avatars.com/api/?name=Owner&background=random`,
 					role: "owner",
 				});
 			}
 
-			// Add collaborators (including current user if they are a collaborator)
+			// Add collaborators (excluding current user if they're not owner)
 			if (goal.collaborators) {
 				goal.collaborators.forEach((collab: any) => {
 					const isCurrentUser =
@@ -226,12 +268,8 @@ export async function GET(request: NextRequest) {
 						collab.userId === userMongoIdString ||
 						collab.email === userEmail;
 
-					// Only add if not already in participants (could happen if collaborator is also owner)
-					const alreadyInParticipants = participants.some(
-						(p: any) => p.id === (collab.userId || collab.mongoUserId)
-					);
-
-					if (!alreadyInParticipants) {
+					if (!isCurrentUser || !isOwner) {
+						// Don't add owner as collaborator
 						participants.push({
 							id: collab.userId || collab.mongoUserId || collab.email,
 							name:
@@ -244,7 +282,6 @@ export async function GET(request: NextRequest) {
 									collab.displayName || collab.email?.charAt(0) || "C"
 								)}&background=random`,
 							role: collab.role || "collaborator",
-							isCurrentUser: isCurrentUser,
 						});
 					}
 				});
@@ -297,6 +334,7 @@ export async function GET(request: NextRequest) {
 				collaborators: goal.collaborators || [],
 				isOwner, // FIXED: Now true for user's own goals
 				ownerId: goal.userId?.toString?.(),
+				userId: goal.userId?.toString?.(),
 				createdAt: goal.createdAt?.toISOString?.() || new Date().toISOString(),
 				updatedAt: goal.updatedAt?.toISOString?.() || new Date().toISOString(),
 				shared: isCollaborative,
@@ -334,7 +372,7 @@ export async function GET(request: NextRequest) {
 	}
 }
 
-// POST create a new goal
+// POST create a new goal - UPDATED FOR CONSISTENT IDS
 export async function POST(request: NextRequest) {
 	try {
 		const user = await requireAuth(request);
@@ -373,13 +411,66 @@ export async function POST(request: NextRequest) {
 
 		const db = await getDatabase();
 
-		// Get current user
-		let currentUser = await db
-			.collection("users")
-			.findOne(
-				{ firebaseUid: user.userId },
-				{ projection: { _id: 1, firebaseUid: 1, email: 1, displayName: 1 } }
-			);
+		// Get current user - UPDATED FOR CUSTOM JWT
+		let currentUser = null;
+
+		// Try MongoDB _id first
+		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
+			try {
+				currentUser = await db
+					.collection("users")
+					.findOne(
+						{ _id: new ObjectId(user.userId) },
+						{
+							projection: {
+								_id: 1,
+								firebaseUid: 1,
+								email: 1,
+								displayName: 1,
+								photoURL: 1,
+							},
+						}
+					);
+			} catch (error) {
+				console.log("⚠️ Invalid ObjectId format");
+			}
+		}
+
+		// Try firebaseUid
+		if (!currentUser && user.userId) {
+			currentUser = await db
+				.collection("users")
+				.findOne(
+					{ firebaseUid: user.userId },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
+		}
+
+		// Try email
+		if (!currentUser && user.email) {
+			currentUser = await db
+				.collection("users")
+				.findOne(
+					{ email: user.email.toLowerCase().trim() },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
+		}
 
 		if (!currentUser) {
 			console.log("🔄 Creating new user for goal creation...");
@@ -419,8 +510,8 @@ export async function POST(request: NextRequest) {
 
 		// Process collaborators
 		const processedCollaborators = collaborators.map((collab: any) => ({
-			userId: collab.userId || collab.email, // Use email as fallback ID
-			mongoUserId: collab.mongoUserId,
+			userId: collab.userId || collab._id?.toString(), // Use MongoDB _id
+			userFirebaseUid: collab.firebaseUid,
 			email: collab.email,
 			displayName: collab.displayName || collab.email?.split("@")[0],
 			photoURL: collab.photoURL || "",
@@ -430,22 +521,28 @@ export async function POST(request: NextRequest) {
 		}));
 
 		// Build accessibleTo array (users who can access this goal)
-		const accessibleTo = [currentUser.firebaseUid, currentUser._id.toString()];
+		const accessibleTo = [
+			currentUser._id.toString(), // MongoDB _id string
+			currentUser.firebaseUid, // Firebase UID
+		].filter(Boolean);
 
 		// Add collaborators to accessibleTo
 		processedCollaborators.forEach((collab: any) => {
 			if (collab.userId && !accessibleTo.includes(collab.userId)) {
 				accessibleTo.push(collab.userId);
 			}
-			if (collab.mongoUserId && !accessibleTo.includes(collab.mongoUserId)) {
-				accessibleTo.push(collab.mongoUserId);
+			if (
+				collab.userFirebaseUid &&
+				!accessibleTo.includes(collab.userFirebaseUid)
+			) {
+				accessibleTo.push(collab.userFirebaseUid);
 			}
 		});
 
-		// Create the goal
+		// Create the goal - USE CONSISTENT ID FORMAT
 		const newGoal = {
-			// Owner information
-			userId: currentUser._id, // Store as ObjectId
+			// Owner information - STORE BOTH ID TYPES
+			userId: currentUser._id, // Store as ObjectId (primary)
 			userFirebaseUid: currentUser.firebaseUid, // Also store firebase UID
 			ownerDetails: {
 				id: currentUser._id.toString(),
@@ -497,7 +594,8 @@ export async function POST(request: NextRequest) {
 		// Also create entry in user_goals collection for the owner
 		try {
 			await db.collection("user_goals").insertOne({
-				userId: currentUser.firebaseUid,
+				userId: currentUser._id.toString(), // Use MongoDB _id
+				userFirebaseUid: currentUser.firebaseUid,
 				goalId: goalId.toString(),
 				role: "owner",
 				addedAt: new Date(),
@@ -509,32 +607,11 @@ export async function POST(request: NextRequest) {
 			console.log("ℹ️ Could not add to user_goals collection:", error);
 		}
 
-		// Create entries for collaborators in user_goals
-		for (const collab of processedCollaborators) {
-			try {
-				await db.collection("user_goals").insertOne({
-					userId: collab.userId || collab.email,
-					goalId: goalId.toString(),
-					role: "collaborator",
-					addedAt: new Date(),
-					status: "invited", // Will change to "active" when they accept
-					isCollaborative: true,
-					inviterId: currentUser.firebaseUid,
-					inviterName: currentUser.displayName,
-					inviterEmail: currentUser.email,
-				});
-			} catch (error) {
-				console.log(
-					`ℹ️ Could not add collaborator ${collab.email} to user_goals`
-				);
-			}
-		}
-
 		// Prepare response
 		const createdGoal = {
 			...newGoal,
 			id: goalId.toString(),
-			userId: currentUser._id.toString(),
+			userId: currentUser._id.toString(), // Return as string
 			deadline: finalDeadline?.toISOString(),
 			createdAt: newGoal.createdAt.toISOString(),
 			updatedAt: newGoal.updatedAt.toISOString(),
@@ -544,6 +621,7 @@ export async function POST(request: NextRequest) {
 			id: createdGoal.id,
 			title: createdGoal.title,
 			isCollaborative: createdGoal.isCollaborative,
+			userId: createdGoal.userId,
 			collaborators: createdGoal.collaborators.length,
 		});
 
