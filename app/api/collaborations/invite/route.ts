@@ -35,26 +35,38 @@ export async function POST(request: NextRequest) {
 		const db = await getDatabase();
 		const timestamp = new Date();
 
-		// Get inviter's details
+		console.log("🔍 Inviter auth info:", {
+			userId: inviter.userId,
+			email: inviter.email,
+			provider: inviter.provider,
+			isMongoDBId: /^[0-9a-fA-F]{24}$/.test(inviter.userId),
+		});
+
+		// Get inviter's details - UPDATED FOR CUSTOM JWT
 		let inviterData = null;
 
-		// Simplify: Always look by email first (most reliable)
-		if (inviter.email) {
-			inviterData = await db.collection("users").findOne(
-				{ email: inviter.email.toLowerCase().trim() },
-				{
-					projection: {
-						displayName: 1,
-						email: 1,
-						photoURL: 1,
-						_id: 1,
-						firebaseUid: 1,
-					},
-				}
-			);
+		// Strategy 1: If userId is MongoDB ID, look by _id
+		if (inviter.userId && /^[0-9a-fA-F]{24}$/.test(inviter.userId)) {
+			try {
+				inviterData = await db.collection("users").findOne(
+					{ _id: new ObjectId(inviter.userId) },
+					{
+						projection: {
+							displayName: 1,
+							email: 1,
+							photoURL: 1,
+							_id: 1,
+							firebaseUid: 1,
+						},
+					}
+				);
+				console.log("✅ Found inviter by MongoDB _id");
+			} catch (error) {
+				console.log("⚠️ Invalid ObjectId format for inviter");
+			}
 		}
 
-		// If not found by email, try firebaseUid
+		// Strategy 2: Look by firebaseUid (for Firebase users)
 		if (!inviterData && inviter.userId) {
 			inviterData = await db.collection("users").findOne(
 				{ firebaseUid: inviter.userId },
@@ -68,6 +80,53 @@ export async function POST(request: NextRequest) {
 					},
 				}
 			);
+			console.log("✅ Found inviter by firebaseUid");
+		}
+
+		// Strategy 3: Look by email
+		if (!inviterData && inviter.email) {
+			inviterData = await db.collection("users").findOne(
+				{ email: inviter.email.toLowerCase().trim() },
+				{
+					projection: {
+						displayName: 1,
+						email: 1,
+						photoURL: 1,
+						_id: 1,
+						firebaseUid: 1,
+					},
+				}
+			);
+			console.log("✅ Found inviter by email");
+		}
+
+		// If still not found, create user
+		if (!inviterData) {
+			console.log("🔄 Creating new inviter user...");
+			const newUser = {
+				firebaseUid: inviter.userId,
+				email: inviter.email || "",
+				displayName: inviter.email?.split("@")[0] || "QuestZen User",
+				photoURL: "",
+				subscriptionTier: "free",
+				streak: 0,
+				longestStreak: 0,
+				totalFocusMinutes: 0,
+				level: 1,
+				xp: 0,
+				achievements: [],
+				createdAt: timestamp,
+				updatedAt: timestamp,
+			};
+
+			const result = await db.collection("users").insertOne(newUser);
+			inviterData = {
+				_id: result.insertedId,
+				firebaseUid: newUser.firebaseUid,
+				email: newUser.email,
+				displayName: newUser.displayName,
+			};
+			console.log("✅ Created new inviter user");
 		}
 
 		// Use provided data or fallback
@@ -75,15 +134,16 @@ export async function POST(request: NextRequest) {
 			inviterName || inviterData?.displayName || "QuestZen User";
 		const inviterDisplayEmail =
 			inviterEmail || inviterData?.email || inviter.email || "";
-		const inviterId = inviterData?.firebaseUid || inviter.userId;
+		const inviterId = inviterData?._id?.toString() || inviter.userId; // Use MongoDB _id
 		const inviterMongoId = inviterData?._id;
+		const inviterFirebaseUid = inviterData?.firebaseUid;
 
-		console.log("👤 Inviter details:", {
+		console.log("👤 FINAL Inviter details:", {
 			inviterDisplayName,
 			inviterDisplayEmail,
-			inviterId,
+			inviterId, // MongoDB _id string
 			inviterMongoId: inviterMongoId?.toString(),
-			firebaseUid: inviterData?.firebaseUid,
+			firebaseUid: inviterFirebaseUid,
 		});
 
 		// Get quest details
@@ -102,6 +162,7 @@ export async function POST(request: NextRequest) {
 				dueDate: 1,
 				userId: 1, // Owner ID
 				collaborators: 1,
+				isCollaborative: 1,
 			},
 		});
 
@@ -113,12 +174,25 @@ export async function POST(request: NextRequest) {
 		}
 
 		// Verify the current user is the quest owner
-		if (
-			quest.userId !== inviterId &&
-			!quest.collaborators?.some(
-				(c: any) => c.userId === inviterId && c.role === "owner"
-			)
-		) {
+		let isQuestOwner = false;
+		const questOwnerId = quest.userId;
+
+		if (questOwnerId instanceof ObjectId) {
+			isQuestOwner = questOwnerId.equals(inviterMongoId);
+		} else if (typeof questOwnerId === "string") {
+			isQuestOwner =
+				questOwnerId === inviterId ||
+				questOwnerId === inviterMongoId?.toString() ||
+				questOwnerId === inviterFirebaseUid;
+		}
+
+		if (!isQuestOwner) {
+			console.log("❌ User is not quest owner:", {
+				questOwnerId: questOwnerId?.toString?.(),
+				inviterId,
+				inviterMongoId: inviterMongoId?.toString(),
+				inviterFirebaseUid,
+			});
 			return NextResponse.json(
 				{ error: { message: "Only quest owners can invite collaborators" } },
 				{ status: 403 }
@@ -164,25 +238,26 @@ export async function POST(request: NextRequest) {
 						firebaseUid: existingUser.firebaseUid,
 					});
 
-					// IMPORTANT FIX: Use the invitee's ID, not the inviter's
-					const inviteeId =
-						existingUser.firebaseUid || existingUser._id.toString();
+					// Get invitee IDs
+					const inviteeId = existingUser._id.toString(); // Use MongoDB _id
+					const inviteeFirebaseUid = existingUser.firebaseUid;
 
 					// Create invitation record for existing user
 					const invitationData = {
 						_id: invitationId,
 						questId,
 						questTitle: questDetails.title,
-						inviterId: inviterId, // Sender's ID
+						inviterId: inviterId, // MongoDB _id string
 						inviterMongoId: inviterMongoId,
 						inviterName: inviterDisplayName,
 						inviterEmail: inviterDisplayEmail,
 						inviteeEmail: cleanEmail,
-						inviteeId: inviteeId, // Recipient's ID - CRITICAL FIX
+						inviteeId: inviteeId, // MongoDB _id string
 						inviteeMongoId: existingUser._id,
+						inviteeFirebaseUid: inviteeFirebaseUid,
 						status: "pending",
 						createdAt: timestamp,
-						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000), // 7 days
+						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000),
 					};
 
 					await db
@@ -193,7 +268,7 @@ export async function POST(request: NextRequest) {
 					const notificationId = uuidv4();
 					await db.collection("notifications").insertOne({
 						_id: notificationId as any,
-						userId: inviteeId, // Use invitee's ID
+						userId: inviteeId, // Use MongoDB _id
 						type: "collaboration_invite",
 						title: "🎯 Collaboration Invitation",
 						message: `${inviterDisplayName} invited you to collaborate on "${questDetails.title}"`,
@@ -208,7 +283,7 @@ export async function POST(request: NextRequest) {
 						},
 						read: false,
 						createdAt: timestamp,
-						expiresAt: new Date(timestamp.getTime() + 30 * 24 * 60 * 60 * 1000), // 30 days
+						expiresAt: new Date(timestamp.getTime() + 30 * 24 * 60 * 60 * 1000),
 					});
 
 					// Add to pending invitations on the goal
@@ -242,7 +317,7 @@ export async function POST(request: NextRequest) {
 						status: "pending",
 						createdAt: timestamp,
 						token: uuidv4(), // For secure acceptance link
-						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000), // 7 days
+						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000),
 					});
 
 					// Add to pending invitations on the goal
