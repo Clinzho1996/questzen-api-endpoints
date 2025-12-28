@@ -199,23 +199,39 @@ export async function GET(request: NextRequest) {
 
 		// Transform goals for frontend
 		const transformedGoals = goals.map((goal) => {
-			// Determine user's role
-			let isOwner = false;
-			let isCollaborator = false;
+			const goalUserId = goal.userId;
+			const goalUserIdString = goalUserId?.toString();
 
-			// Check if user is owner
-			if (goal.userId) {
-				if (goal.userId instanceof ObjectId) {
-					isOwner = goal.userId.equals(userMongoId);
-				} else if (typeof goal.userId === "string") {
+			// CRITICAL FIX: Compare ALL possible user identifiers
+			let isOwner = false;
+
+			// Check all possible ways the current user could be the owner
+			if (goalUserId) {
+				// Case 1: userId is ObjectId - compare with userMongoId
+				if (goalUserId instanceof ObjectId) {
+					isOwner = goalUserId.equals(userMongoId);
+				}
+				// Case 2: userId is string - compare with all user identifiers
+				else if (typeof goalUserId === "string") {
 					isOwner =
-						goal.userId === userFirebaseUid ||
-						goal.userId === userMongoIdString;
+						goalUserId === userFirebaseUid ||
+						goalUserId === userMongoIdString ||
+						goalUserId === userMongoId.toString() ||
+						goalUserId === userEmail;
 				}
 			}
 
+			// Also check if user is in ownerDetails
+			if (!isOwner && goal.ownerDetails) {
+				isOwner =
+					goal.ownerDetails.id === userMongoIdString ||
+					goal.ownerDetails.firebaseUid === userFirebaseUid ||
+					goal.ownerDetails.email === userEmail;
+			}
+
 			// Check if user is collaborator
-			if (!isOwner && goal.collaborators) {
+			let isCollaborator = false;
+			if (goal.collaborators) {
 				isCollaborator = goal.collaborators.some(
 					(collab: any) =>
 						collab.userId === userFirebaseUid ||
@@ -225,7 +241,7 @@ export async function GET(request: NextRequest) {
 				);
 			}
 
-			// Determine role
+			// CRITICAL FIX: Determine role - prioritize owner over collaborator
 			const role = isOwner
 				? "owner"
 				: isCollaborator
@@ -237,6 +253,17 @@ export async function GET(request: NextRequest) {
 				goal.isCollaborative ||
 				isCollaborator ||
 				(goal.collaborators && goal.collaborators.length > 0);
+
+			// DEBUG LOGGING
+			console.log(`Goal "${goal.title}":`, {
+				goalUserId: goalUserIdString,
+				userFirebaseUid,
+				userMongoId: userMongoIdString,
+				isOwner,
+				isCollaborator,
+				role,
+				collaborators: goal.collaborators?.length || 0,
+			});
 
 			// Build participants array
 			const participants = [];
