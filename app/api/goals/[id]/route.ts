@@ -219,7 +219,7 @@ export async function PATCH(
 	}
 }
 
-// app/api/goals/[id]/route.ts - UPDATE THE DELETE FUNCTION
+// app/api/goals/[id]/route.ts - FIXED DELETE FUNCTION
 export async function DELETE(
 	request: NextRequest,
 	context: { params: Promise<{ id: string }> }
@@ -229,75 +229,126 @@ export async function DELETE(
 		const params = await context.params;
 		const db = await getDatabase();
 
-		// Get current user info
-		const currentUser = await db
-			.collection("users")
-			.findOne(
-				{ firebaseUid: user.userId },
-				{ projection: { _id: 1, firebaseUid: 1 } }
-			);
+		console.log("🗑️ DELETE Goal Request:", {
+			goalId: params.id,
+			userIdFromToken: user.userId,
+			emailFromToken: user.email,
+			provider: user.provider,
+		});
+
+		// Find user in database - try multiple ways
+		const currentUser = await db.collection("users").findOne({
+			$or: [
+				{ _id: new ObjectId(user.userId) }, // Try as MongoDB ObjectId
+				{ firebaseUid: user.userId }, // Try as Firebase UID
+				{ email: user.email }, // Try by email
+			],
+		});
 
 		if (!currentUser) {
+			console.error("❌ User not found in database:", {
+				searchedWith: {
+					_id: user.userId,
+					firebaseUid: user.userId,
+					email: user.email,
+				},
+			});
 			return NextResponse.json(
 				{ error: { message: "User not found" } },
 				{ status: 404 }
 			);
 		}
 
-		const userIdObjectId = currentUser._id;
-		const userId = currentUser.firebaseUid || currentUser._id.toString();
-
-		console.log("🗑️ DELETE Goal Request:", {
-			goalId: params.id,
-			userId,
-			userIdObjectId,
-			userFirebaseUid: user.userId,
+		console.log("👤 Found user in database:", {
+			_id: currentUser._id,
+			firebaseUid: currentUser.firebaseUid,
+			email: currentUser.email,
 		});
 
-		// Verify goal belongs to user (only owners can delete)
-		// Check both possible userId formats
+		// Get all possible user identifiers
+		const userIdObjectId = currentUser._id;
+		const userIdString = currentUser._id.toString();
+		const firebaseUid = currentUser.firebaseUid;
+
+		// Find the goal - check multiple possible userId formats
 		const goal = await db.collection("goals").findOne({
 			_id: new ObjectId(params.id),
 			$or: [
-				{ userId: userIdObjectId }, // MongoDB ObjectId
-				{ userId: userId }, // String ID (Firebase UID)
-				{ userId: user.userId }, // Original Firebase UID from auth
+				// MongoDB ObjectId format
+				{ userId: userIdObjectId },
+				// String version of ObjectId
+				{ userId: userIdString },
+				// Firebase UID if user has one
+				...(firebaseUid ? [{ userId: firebaseUid }] : []),
 			],
 		});
 
-		console.log("🔍 Found goal:", {
+		console.log("🔍 Goal query result:", {
 			found: !!goal,
+			goalId: goal?._id,
 			goalUserId: goal?.userId,
 			goalUserIdType: typeof goal?.userId,
+			goalTitle: goal?.title,
 		});
 
 		if (!goal) {
+			// Log what we searched for to debug
+			const searchedIds = [
+				userIdObjectId,
+				userIdString,
+				...(firebaseUid ? [firebaseUid] : []),
+			];
+
+			console.error("❌ Goal not found or no permission:", {
+				searchedIds,
+				actualGoalUserId: "Let's check the actual goal",
+			});
+
+			// Let's check what the goal actually has for userId
+			const actualGoal = await db.collection("goals").findOne({
+				_id: new ObjectId(params.id),
+			});
+
+			if (actualGoal) {
+				console.error("❌ Goal exists but userId doesn't match:", {
+					goalUserId: actualGoal.userId,
+					goalUserIdType: typeof actualGoal.userId,
+					goalTitle: actualGoal.title,
+					userEmail: user.email,
+				});
+			}
+
 			return NextResponse.json(
 				{
 					error: {
 						message: "Goal not found or you don't have permission to delete",
-						details: {
-							searchedIds: {
-								userIdObjectId,
-								userId,
-								userFirebaseUid: user.userId,
-							},
-						},
+						debug:
+							process.env.NODE_ENV === "development"
+								? {
+										userIdsSearched: searchedIds,
+										actualGoalUserId: actualGoal?.userId,
+										userEmail: user.email,
+								  }
+								: undefined,
 					},
 				},
 				{ status: 404 }
 			);
 		}
 
-		// Try deleting with all possible userId formats
-		const result = await db.collection("goals").deleteOne({
+		// Delete the goal - try all possible userId formats
+		const deleteQuery = {
 			_id: new ObjectId(params.id),
 			$or: [
 				{ userId: userIdObjectId },
-				{ userId: userId },
-				{ userId: user.userId },
+				{ userId: userIdString },
+				...(firebaseUid ? [{ userId: firebaseUid }] : []),
 			],
-		});
+		};
+
+		console.log("🗑️ Executing delete query:", deleteQuery);
+
+		const result = await db.collection("goals").deleteOne(deleteQuery);
 
 		console.log("🗑️ Delete result:", {
 			deletedCount: result.deletedCount,
@@ -305,6 +356,7 @@ export async function DELETE(
 		});
 
 		if (result.deletedCount === 0) {
+			console.error("❌ Delete query matched but didn't delete");
 			return NextResponse.json(
 				{
 					error: {
@@ -317,7 +369,10 @@ export async function DELETE(
 
 		// Remove from collaborators' lists if it was collaborative
 		if (goal.collaborators && goal.collaborators.length > 0) {
-			// You might want to notify collaborators that the goal was deleted
+			console.log(
+				"👥 Removing goal from collaborators:",
+				goal.collaborators.length
+			);
 			for (const collaborator of goal.collaborators) {
 				await db.collection("notifications").insertOne({
 					userId: collaborator.userId,
@@ -327,13 +382,15 @@ export async function DELETE(
 					data: {
 						goalId: params.id,
 						goalTitle: goal.title,
-						ownerId: userId,
+						ownerId: userIdString,
 					},
 					read: false,
 					createdAt: new Date(),
 				});
 			}
 		}
+
+		console.log("✅ Goal deleted successfully");
 
 		return NextResponse.json({
 			message: "Goal deleted successfully",
@@ -350,6 +407,7 @@ export async function DELETE(
 
 		// Handle invalid ObjectId
 		if (error.message.includes("ObjectId") || error.message.includes("hex")) {
+			console.error("❌ Invalid ObjectId:", error.message);
 			return NextResponse.json(
 				{ error: { message: "Invalid goal ID format" } },
 				{ status: 400 }
