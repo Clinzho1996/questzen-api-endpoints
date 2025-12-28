@@ -219,6 +219,7 @@ export async function PATCH(
 	}
 }
 
+// app/api/goals/[id]/route.ts - UPDATE THE DELETE FUNCTION
 export async function DELETE(
 	request: NextRequest,
 	context: { params: Promise<{ id: string }> }
@@ -246,10 +247,28 @@ export async function DELETE(
 		const userIdObjectId = currentUser._id;
 		const userId = currentUser.firebaseUid || currentUser._id.toString();
 
+		console.log("🗑️ DELETE Goal Request:", {
+			goalId: params.id,
+			userId,
+			userIdObjectId,
+			userFirebaseUid: user.userId,
+		});
+
 		// Verify goal belongs to user (only owners can delete)
+		// Check both possible userId formats
 		const goal = await db.collection("goals").findOne({
 			_id: new ObjectId(params.id),
-			userId: userIdObjectId, // Only allow deletion by owner
+			$or: [
+				{ userId: userIdObjectId }, // MongoDB ObjectId
+				{ userId: userId }, // String ID (Firebase UID)
+				{ userId: user.userId }, // Original Firebase UID from auth
+			],
+		});
+
+		console.log("🔍 Found goal:", {
+			found: !!goal,
+			goalUserId: goal?.userId,
+			goalUserIdType: typeof goal?.userId,
 		});
 
 		if (!goal) {
@@ -257,28 +276,48 @@ export async function DELETE(
 				{
 					error: {
 						message: "Goal not found or you don't have permission to delete",
+						details: {
+							searchedIds: {
+								userIdObjectId,
+								userId,
+								userFirebaseUid: user.userId,
+							},
+						},
 					},
 				},
 				{ status: 404 }
 			);
 		}
 
+		// Try deleting with all possible userId formats
 		const result = await db.collection("goals").deleteOne({
 			_id: new ObjectId(params.id),
-			userId: userIdObjectId,
+			$or: [
+				{ userId: userIdObjectId },
+				{ userId: userId },
+				{ userId: user.userId },
+			],
+		});
+
+		console.log("🗑️ Delete result:", {
+			deletedCount: result.deletedCount,
+			acknowledged: result.acknowledged,
 		});
 
 		if (result.deletedCount === 0) {
 			return NextResponse.json(
-				{ error: { message: "Goal not found" } },
-				{ status: 404 }
+				{
+					error: {
+						message: "Failed to delete goal",
+					},
+				},
+				{ status: 500 }
 			);
 		}
 
 		// Remove from collaborators' lists if it was collaborative
 		if (goal.collaborators && goal.collaborators.length > 0) {
 			// You might want to notify collaborators that the goal was deleted
-			// Create notifications for collaborators
 			for (const collaborator of goal.collaborators) {
 				await db.collection("notifications").insertOne({
 					userId: collaborator.userId,
@@ -300,6 +339,8 @@ export async function DELETE(
 			message: "Goal deleted successfully",
 		});
 	} catch (error: any) {
+		console.error("❌ Delete goal error:", error);
+
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
 				{ error: { message: "Unauthorized" } },
@@ -307,9 +348,22 @@ export async function DELETE(
 			);
 		}
 
-		console.error("Delete goal error:", error);
+		// Handle invalid ObjectId
+		if (error.message.includes("ObjectId") || error.message.includes("hex")) {
+			return NextResponse.json(
+				{ error: { message: "Invalid goal ID format" } },
+				{ status: 400 }
+			);
+		}
+
 		return NextResponse.json(
-			{ error: { message: "Server error" } },
+			{
+				error: {
+					message: "Server error",
+					details:
+						process.env.NODE_ENV === "development" ? error.message : undefined,
+				},
+			},
 			{ status: 500 }
 		);
 	}
