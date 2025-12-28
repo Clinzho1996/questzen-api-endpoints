@@ -1,4 +1,4 @@
-// app/api/goals/route.ts
+// app/api/goals/route.ts - COMPLETE FIXED GET HANDLER
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -25,7 +25,15 @@ export async function GET(request: NextRequest) {
 					{ email: user.email },
 				],
 			},
-			{ projection: { _id: 1, firebaseUid: 1, email: 1, displayName: 1 } }
+			{
+				projection: {
+					_id: 1,
+					firebaseUid: 1,
+					email: 1,
+					displayName: 1,
+					photoURL: 1,
+				},
+			}
 		);
 
 		if (!currentUser) {
@@ -52,6 +60,7 @@ export async function GET(request: NextRequest) {
 				firebaseUid: user.userId,
 				email: user.email || "",
 				displayName: newUser.displayName,
+				photoURL: "",
 			};
 		}
 
@@ -60,78 +69,15 @@ export async function GET(request: NextRequest) {
 		const userMongoId = currentUser._id;
 		const userMongoIdString = userMongoId.toString();
 		const userEmail = currentUser.email;
+		const userDisplayName =
+			currentUser.displayName || userEmail?.split("@")[0] || "User";
 
 		console.log("👤 Current user identifiers:", {
 			firebaseUid: userFirebaseUid,
 			mongoId: userMongoIdString,
 			email: userEmail,
+			displayName: userDisplayName,
 		});
-
-		// DEBUG: Check what's in the database
-		// 1. Goals where user is owner
-		const ownerGoals = await db
-			.collection("goals")
-			.find({
-				$or: [
-					{ userId: userMongoId },
-					{ userId: userFirebaseUid },
-					{ userId: userMongoIdString },
-				],
-			})
-			.toArray();
-
-		console.log(`👑 Goals where user is owner: ${ownerGoals.length}`);
-
-		// 2. Goals where user is collaborator
-		const collabGoals = await db
-			.collection("goals")
-			.find({
-				$or: [
-					{ "collaborators.userId": userFirebaseUid },
-					{ "collaborators.userId": userMongoIdString },
-					{ "collaborators.mongoUserId": userMongoIdString },
-					{ "collaborators.email": userEmail },
-				],
-			})
-			.toArray();
-
-		console.log(`🤝 Goals where user is collaborator: ${collabGoals.length}`);
-		collabGoals.forEach((g, i) => {
-			console.log(
-				`   ${i + 1}. ${g.title} - Collaborators:`,
-				g.collaborators?.map((c: any) => ({
-					userId: c.userId,
-					email: c.email,
-					matches: c.userId === userFirebaseUid || c.email === userEmail,
-				}))
-			);
-		});
-
-		// 3. Goals where user is in accessibleTo
-		const accessibleGoals = await db
-			.collection("goals")
-			.find({
-				accessibleTo: {
-					$in: [userFirebaseUid, userMongoIdString, userMongoId],
-				},
-			})
-			.toArray();
-
-		console.log(`🔓 Goals in accessibleTo: ${accessibleGoals.length}`);
-
-		// 4. Check user_goals collection
-		let userGoalsEntries: any = [];
-		try {
-			userGoalsEntries = await db
-				.collection("user_goals")
-				.find({
-					userId: userFirebaseUid,
-				})
-				.toArray();
-			console.log(`📋 Goals in user_goals: ${userGoalsEntries.length}`);
-		} catch (error) {
-			console.log("ℹ️ user_goals collection doesn't exist");
-		}
 
 		// Build comprehensive query
 		const queryConditions: any[] = [];
@@ -142,6 +88,9 @@ export async function GET(request: NextRequest) {
 				{ userId: userMongoId },
 				{ userId: userFirebaseUid },
 				{ userId: userMongoIdString },
+				{ "ownerDetails.id": userMongoIdString },
+				{ "ownerDetails.firebaseUid": userFirebaseUid },
+				{ "ownerDetails.email": userEmail },
 			],
 		});
 
@@ -162,29 +111,7 @@ export async function GET(request: NextRequest) {
 			},
 		});
 
-		// 4. Goals from user_goals collection
-		if (userGoalsEntries.length > 0) {
-			const goalIds = userGoalsEntries
-				.map((ug: any) => {
-					try {
-						return new ObjectId(ug.goalId);
-					} catch {
-						return ug.goalId;
-					}
-				})
-				.filter(Boolean);
-
-			if (goalIds.length > 0) {
-				queryConditions.push({
-					_id: { $in: goalIds },
-				});
-			}
-		}
-
-		console.log(
-			"🔍 Executing final query with conditions:",
-			queryConditions.length
-		);
+		console.log("🔍 Executing query with conditions:", queryConditions.length);
 
 		// Execute query
 		const goals = await db
@@ -199,6 +126,7 @@ export async function GET(request: NextRequest) {
 
 		// Transform goals for frontend
 		const transformedGoals = goals.map((goal) => {
+			// Get user identifiers for comparison
 			const goalUserId = goal.userId;
 			const goalUserIdString = goalUserId?.toString();
 
@@ -265,29 +193,32 @@ export async function GET(request: NextRequest) {
 				collaborators: goal.collaborators?.length || 0,
 			});
 
-			// Build participants array
-			const participants = [];
+			// Build participants array - INCLUDING CURRENT USER
+			const participants: any = [];
 
-			// Add owner if not current user
-			if (goal.userId && !isOwner) {
-				// Try to get owner details
-				let ownerName = "Goal Owner";
-				let ownerAvatar = `https://ui-avatars.com/api/?name=Owner&background=random`;
-
-				if (goal.ownerDetails) {
-					ownerName = goal.ownerDetails.displayName || ownerName;
-					ownerAvatar = goal.ownerDetails.photoURL || ownerAvatar;
-				}
-
+			// Add owner
+			if (goal.ownerDetails) {
 				participants.push({
-					id: goal.userId?.toString?.(),
-					name: ownerName,
-					avatar: ownerAvatar,
+					id: goal.ownerDetails.id || goal.ownerDetails.firebaseUid,
+					name: goal.ownerDetails.displayName || "Goal Owner",
+					avatar:
+						goal.ownerDetails.photoURL ||
+						`https://ui-avatars.com/api/?name=${encodeURIComponent(
+							goal.ownerDetails.displayName || "Owner"
+						)}&background=random`,
+					role: "owner",
+				});
+			} else {
+				// Fallback if no ownerDetails
+				participants.push({
+					id: goalUserIdString || "unknown",
+					name: "Goal Owner",
+					avatar: `https://ui-avatars.com/api/?name=Owner&background=random`,
 					role: "owner",
 				});
 			}
 
-			// Add collaborators (excluding current user)
+			// Add collaborators (including current user if they are a collaborator)
 			if (goal.collaborators) {
 				goal.collaborators.forEach((collab: any) => {
 					const isCurrentUser =
@@ -295,9 +226,14 @@ export async function GET(request: NextRequest) {
 						collab.userId === userMongoIdString ||
 						collab.email === userEmail;
 
-					if (!isCurrentUser) {
+					// Only add if not already in participants (could happen if collaborator is also owner)
+					const alreadyInParticipants = participants.some(
+						(p: any) => p.id === (collab.userId || collab.mongoUserId)
+					);
+
+					if (!alreadyInParticipants) {
 						participants.push({
-							id: collab.userId || collab.mongoUserId,
+							id: collab.userId || collab.mongoUserId || collab.email,
 							name:
 								collab.displayName ||
 								collab.email?.split("@")[0] ||
@@ -308,6 +244,7 @@ export async function GET(request: NextRequest) {
 									collab.displayName || collab.email?.charAt(0) || "C"
 								)}&background=random`,
 							role: collab.role || "collaborator",
+							isCurrentUser: isCurrentUser,
 						});
 					}
 				});
@@ -354,11 +291,11 @@ export async function GET(request: NextRequest) {
 				completed: goal.completed || false,
 				tasks: goal.tasks || [],
 				aiSuggestions: goal.aiSuggestions || [],
-				role,
+				role, // FIXED: Now returns "owner" for user's own goals
 				isCollaborative,
 				participants,
 				collaborators: goal.collaborators || [],
-				isOwner,
+				isOwner, // FIXED: Now true for user's own goals
 				ownerId: goal.userId?.toString?.(),
 				createdAt: goal.createdAt?.toISOString?.() || new Date().toISOString(),
 				updatedAt: goal.updatedAt?.toISOString?.() || new Date().toISOString(),
