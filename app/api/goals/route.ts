@@ -23,20 +23,18 @@ export async function GET(request: NextRequest) {
 		// Priority 1: Look by MongoDB _id if userId is MongoDB ID
 		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
 			try {
-				currentUser = await db
-					.collection("users")
-					.findOne(
-						{ _id: new ObjectId(user.userId) },
-						{
-							projection: {
-								_id: 1,
-								firebaseUid: 1,
-								email: 1,
-								displayName: 1,
-								photoURL: 1,
-							},
-						}
-					);
+				currentUser = await db.collection("users").findOne(
+					{ _id: new ObjectId(user.userId) },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
 				console.log("✅ Found user by MongoDB _id");
 			} catch (error) {
 				console.log("⚠️ Invalid ObjectId format for user lookup");
@@ -45,39 +43,35 @@ export async function GET(request: NextRequest) {
 
 		// Priority 2: Look by firebaseUid
 		if (!currentUser && user.userId) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ firebaseUid: user.userId },
-					{
-						projection: {
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-						},
-					}
-				);
+			currentUser = await db.collection("users").findOne(
+				{ firebaseUid: user.userId },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
 			console.log("✅ Found user by firebaseUid");
 		}
 
 		// Priority 3: Look by email
 		if (!currentUser && user.email) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ email: user.email.toLowerCase().trim() },
-					{
-						projection: {
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-						},
-					}
-				);
+			currentUser = await db.collection("users").findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
 			console.log("✅ Found user by email");
 		}
 
@@ -417,20 +411,18 @@ export async function POST(request: NextRequest) {
 		// Try MongoDB _id first
 		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
 			try {
-				currentUser = await db
-					.collection("users")
-					.findOne(
-						{ _id: new ObjectId(user.userId) },
-						{
-							projection: {
-								_id: 1,
-								firebaseUid: 1,
-								email: 1,
-								displayName: 1,
-								photoURL: 1,
-							},
-						}
-					);
+				currentUser = await db.collection("users").findOne(
+					{ _id: new ObjectId(user.userId) },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
 			} catch (error) {
 				console.log("⚠️ Invalid ObjectId format");
 			}
@@ -438,38 +430,34 @@ export async function POST(request: NextRequest) {
 
 		// Try firebaseUid
 		if (!currentUser && user.userId) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ firebaseUid: user.userId },
-					{
-						projection: {
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-						},
-					}
-				);
+			currentUser = await db.collection("users").findOne(
+				{ firebaseUid: user.userId },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
 		}
 
 		// Try email
 		if (!currentUser && user.email) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ email: user.email.toLowerCase().trim() },
-					{
-						projection: {
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-						},
-					}
-				);
+			currentUser = await db.collection("users").findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
 		}
 
 		if (!currentUser) {
@@ -538,6 +526,32 @@ export async function POST(request: NextRequest) {
 				accessibleTo.push(collab.userFirebaseUid);
 			}
 		});
+
+		// In POST /api/goals - Add this check at the beginning
+		const existingGoalsWithEmail = await db.collection("goals").findOne({
+			"ownerDetails.email": user.email,
+			userId: { $ne: currentUser._id }, // Different from current user ID
+		});
+
+		if (existingGoalsWithEmail) {
+			console.log(
+				"⚠️ Found existing goals with same email but different user ID"
+			);
+			console.log("   Merging user accounts...");
+
+			// Update all old goals to use current user ID
+			await db.collection("goals").updateMany(
+				{ "ownerDetails.email": user.email, userId: { $ne: currentUser._id } },
+				{
+					$set: {
+						userId: currentUser._id,
+						"ownerDetails.id": currentUser._id.toString(),
+						"ownerDetails.firebaseUid": currentUser.firebaseUid,
+						updatedAt: new Date(),
+					},
+				}
+			);
+		}
 
 		// Create the goal - USE CONSISTENT ID FORMAT
 		const newGoal = {
