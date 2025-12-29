@@ -1,10 +1,9 @@
-// app/api/goals/[id]/route.ts
+// app/api/goals/[id]/route.ts - FIXED ACHIEVEMENT UNLOCKING
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-// app/api/goals/[id]/route.ts - FIXED PATCH FUNCTION
 export async function PATCH(
 	request: NextRequest,
 	context: { params: Promise<{ id: string }> }
@@ -107,20 +106,22 @@ export async function PATCH(
 			},
 		});
 
+		// Track if this is a completion toggle for stats update
+		const isCompleting =
+			body.completed !== undefined && body.completed && !goal.completed;
+		const isReopening =
+			body.completed !== undefined && !body.completed && goal.completed;
+
 		// Build update object
 		const updateData: any = {
 			updatedAt: new Date(),
 		};
 
-		// Handle completion toggle - ALLOW BOTH OWNERS AND COLLABORATORS
+		// Handle completion status
 		if (body.completed !== undefined) {
 			updateData.completed = body.completed;
 			if (body.completed) {
 				updateData.completedAt = new Date();
-				// Auto-set progress to 100% when completed
-				if (body.progress === undefined) {
-					updateData.progress = 100;
-				}
 			} else {
 				updateData.completedAt = null;
 			}
@@ -147,6 +148,90 @@ export async function PATCH(
 		await db
 			.collection("goals")
 			.updateOne({ _id: new ObjectId(params.id) }, { $set: updateData });
+
+		// If this is a completion toggle, also update user stats
+		if (isCompleting || isReopening) {
+			console.log("📊 Updating user stats for goal completion change:", {
+				userId: userIdString,
+				isCompleting,
+				isReopening,
+				goalId: params.id,
+			});
+
+			// Update user's completedGoals count and XP
+			const xpChange = isCompleting ? 50 : -50;
+			const completedChange = isCompleting ? 1 : -1;
+
+			await db.collection("users").updateOne(
+				{ _id: userIdObjectId },
+				{
+					$inc: {
+						xp: xpChange,
+						completedGoals: completedChange,
+					},
+					$set: {
+						updatedAt: new Date(),
+					},
+				}
+			);
+
+			console.log("✅ User stats updated:", {
+				xpChange,
+				completedChange,
+			});
+
+			// Check for achievements if completing a goal
+			if (isCompleting) {
+				// Get updated user to check achievements
+				const updatedUser = await db
+					.collection("users")
+					.findOne(
+						{ _id: userIdObjectId },
+						{ projection: { completedGoals: 1, achievements: 1 } }
+					);
+
+				if (updatedUser) {
+					const completedCount = updatedUser.completedGoals || 0;
+					const achievements = updatedUser.achievements || [];
+
+					console.log("🏆 Checking achievements:", {
+						completedCount,
+						currentAchievements: achievements,
+					});
+
+					// FIXED: Use the correct MongoDB update syntax
+					// Check for first quest achievement
+					if (completedCount >= 1 && !achievements.includes("first_quest")) {
+						console.log("🎉 Unlocking 'first_quest' achievement");
+
+						// Method 1: Use $addToSet (prevents duplicates)
+						await db.collection("users").updateOne(
+							{ _id: userIdObjectId },
+							{
+								$addToSet: { achievements: "first_quest" },
+								$inc: { xp: 100 },
+							} as any // Type assertion to bypass TypeScript error
+						);
+						console.log("✅ 'first_quest' achievement unlocked");
+					}
+
+					// Check for quest master achievement
+					if (completedCount >= 10 && !achievements.includes("quest_master")) {
+						console.log("🎉 Unlocking 'quest_master' achievement");
+
+						// Method 2: Use $push with proper typing
+						const updateDoc: any = {
+							$push: { achievements: "quest_master" },
+							$inc: { xp: 100 },
+						};
+						await db
+							.collection("users")
+							.updateOne({ _id: userIdObjectId }, updateDoc);
+						console.log("✅ 'quest_master' achievement unlocked");
+					}
+				}
+			}
+		}
 
 		// Get updated goal
 		const updatedGoal = await db.collection("goals").findOne({
@@ -177,6 +262,8 @@ export async function PATCH(
 		console.log("✅ Goal updated successfully:", {
 			id: responseGoal.id,
 			role: responseGoal.role,
+			isCompleting,
+			isReopening,
 		});
 
 		return NextResponse.json(responseGoal);
