@@ -173,7 +173,6 @@ export async function GET(request: NextRequest) {
 				{ email: user.email.toLowerCase().trim() },
 				{
 					projection: {
-						password: 0,
 						// Include all the stat fields explicitly
 						_id: 1,
 						firebaseUid: 1,
