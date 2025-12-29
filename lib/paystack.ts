@@ -1,55 +1,127 @@
-// lib/paystack.ts - CORRECTED
-import Paystack from "paystack-api";
+// lib/paystack.ts - Using REST API directly
+export interface PaystackCustomer {
+	id: number;
+	customer_code: string;
+	email: string;
+	first_name: string;
+	last_name: string;
+	phone?: string;
+	metadata?: Record<string, any>;
+}
 
-// Use a singleton pattern to avoid recreating instances
-let paystackInstance: Paystack | null = null;
+export interface PaystackTransaction {
+	authorization_url: string;
+	access_code: string;
+	reference: string;
+}
 
-export function getPaystack(): Paystack {
-	if (paystackInstance) {
-		return paystackInstance;
+export interface PaystackPlan {
+	plan_code: string;
+	name: string;
+	amount: number;
+	interval: string;
+}
+
+class PaystackAPI {
+	private secretKey: string;
+	private baseURL = "https://api.paystack.co";
+
+	constructor() {
+		const secretKey = process.env.PAYSTACK_SECRET_KEY;
+		if (!secretKey) {
+			throw new Error("PAYSTACK_SECRET_KEY environment variable is required");
+		}
+		this.secretKey = secretKey;
 	}
 
-	const secretKey = process.env.PAYSTACK_SECRET_KEY;
+	private async request<T>(
+		method: string,
+		endpoint: string,
+		data?: any
+	): Promise<T> {
+		const url = `${this.baseURL}${endpoint}`;
+		const headers = {
+			Authorization: `Bearer ${this.secretKey}`,
+			"Content-Type": "application/json",
+		};
 
-	if (!secretKey) {
-		console.error("❌ PAYSTACK_SECRET_KEY is not defined");
-		console.error(
-			"Current env vars:",
-			Object.keys(process.env).filter((k) => k.includes("PAYSTACK"))
-		);
-		throw new Error("PAYSTACK_SECRET_KEY is not defined");
+		const response = await fetch(url, {
+			method,
+			headers,
+			body: data ? JSON.stringify(data) : undefined,
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				`Paystack API error: ${response.status} - ${
+					error.message || response.statusText
+				}`
+			);
+		}
+
+		return response.json();
 	}
 
-	console.log(
-		"🔑 Paystack initialized with key:",
-		secretKey.substring(0, 10) + "..."
-	);
+	// Customer methods
+	async createCustomer(data: {
+		email: string;
+		first_name?: string;
+		last_name?: string;
+		phone?: string;
+		metadata?: Record<string, any>;
+	}): Promise<{ data: PaystackCustomer }> {
+		return this.request("POST", "/customer", data);
+	}
 
-	// Paystack constructor only takes the API key as argument
-	paystackInstance = new Paystack(secretKey);
+	async getCustomer(customerCode: string): Promise<{ data: PaystackCustomer }> {
+		return this.request("GET", `/customer/${customerCode}`);
+	}
 
+	// Transaction methods
+	async initializeTransaction(data: {
+		email: string;
+		amount: number;
+		reference?: string;
+		callback_url?: string;
+		plan?: string;
+		metadata?: Record<string, any>;
+		channels?: string[];
+	}): Promise<{ data: PaystackTransaction }> {
+		return this.request("POST", "/transaction/initialize", data);
+	}
+
+	async verifyTransaction(reference: string): Promise<{ data: any }> {
+		return this.request("GET", `/transaction/verify/${reference}`);
+	}
+
+	// Plan methods
+	async createPlan(data: {
+		name: string;
+		amount: number;
+		interval: string;
+		currency?: string;
+		description?: string;
+	}): Promise<{ data: PaystackPlan }> {
+		return this.request("POST", "/plan", data);
+	}
+
+	async getPlan(planCode: string): Promise<{ data: PaystackPlan }> {
+		return this.request("GET", `/plan/${planCode}`);
+	}
+}
+
+// Singleton instance
+let paystackInstance: PaystackAPI | null = null;
+
+export function getPaystack(): PaystackAPI {
+	if (!paystackInstance) {
+		paystackInstance = new PaystackAPI();
+	}
 	return paystackInstance;
 }
 
 export const PLAN_CODES = {
-	premium_monthly: process.env.PAYSTACK_PREMIUM_MONTHLY_PLAN_CODE ?? "",
-	premium_yearly: process.env.PAYSTACK_PREMIUM_YEARLY_PLAN_CODE ?? "",
+	premium_monthly: process.env.PAYSTACK_PREMIUM_MONTHLY_PLAN_CODE || "",
+	premium_yearly: process.env.PAYSTACK_PREMIUM_YEARLY_PLAN_CODE || "",
 };
-
-// Test function to verify configuration
-export function testPaystackConfig() {
-	console.log("🔍 Testing Paystack configuration:");
-	console.log("PAYSTACK_SECRET_KEY exists:", !!process.env.PAYSTACK_SECRET_KEY);
-	console.log(
-		"PAYSTACK_PREMIUM_MONTHLY_PLAN_CODE:",
-		process.env.PAYSTACK_PREMIUM_MONTHLY_PLAN_CODE || "Not set"
-	);
-	console.log(
-		"PAYSTACK_PREMIUM_YEARLY_PLAN_CODE:",
-		process.env.PAYSTACK_PREMIUM_YEARLY_PLAN_CODE || "Not set"
-	);
-
-	if (!process.env.PAYSTACK_SECRET_KEY) {
-		throw new Error("PAYSTACK_SECRET_KEY environment variable is required");
-	}
-}
