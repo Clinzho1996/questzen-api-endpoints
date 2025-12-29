@@ -1,5 +1,7 @@
+// app/api/user/achievements/unlock/route.ts - FIXED VERSION
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function OPTIONS(request: NextRequest) {
@@ -40,25 +42,74 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
+		console.log("🏆 Unlock achievement request:", {
+			userId: user.userId,
+			email: user.email,
+			achievementId,
+		});
+
 		const db = await getDatabase();
-		const userData = await db
-			.collection("users")
-			.findOne(
-				{ firebaseUid: user.userId },
-				{ projection: { achievements: 1, xp: 1 } }
-			);
+
+		// Find user by MULTIPLE methods (same as other routes)
+		let userData = null;
+
+		// Try as MongoDB ObjectId first (from custom JWT)
+		if (user.userId && user.userId.length === 24) {
+			try {
+				userData = await db
+					.collection("users")
+					.findOne(
+						{ _id: new ObjectId(user.userId) },
+						{ projection: { achievements: 1, xp: 1, email: 1, _id: 1 } }
+					);
+			} catch (error) {
+				console.log("Not a valid ObjectId:", user.userId);
+			}
+		}
+
+		// Try as firebaseUid if not found
+		if (!userData && user.userId) {
+			userData = await db
+				.collection("users")
+				.findOne(
+					{ firebaseUid: user.userId },
+					{ projection: { achievements: 1, xp: 1, email: 1, _id: 1 } }
+				);
+		}
+
+		// Try by email as last resort
+		if (!userData && user.email) {
+			userData = await db
+				.collection("users")
+				.findOne(
+					{ email: user.email.toLowerCase().trim() },
+					{ projection: { achievements: 1, xp: 1, email: 1, _id: 1 } }
+				);
+		}
 
 		if (!userData) {
+			console.error("❌ User not found for achievement unlock:", {
+				userId: user.userId,
+				email: user.email,
+			});
 			return NextResponse.json(
 				{ error: { message: "User not found" } },
 				{ status: 404 }
 			);
 		}
 
+		console.log("👤 Found user for achievement:", {
+			_id: userData._id,
+			email: userData.email,
+			currentAchievements: userData.achievements || [],
+			currentXP: userData.xp || 0,
+		});
+
 		const currentAchievements = userData.achievements || [];
 
 		// Check if achievement already unlocked
 		if (currentAchievements.includes(achievementId)) {
+			console.log("✅ Achievement already unlocked:", achievementId);
 			return NextResponse.json({
 				success: true,
 				message: "Achievement already unlocked",
@@ -66,9 +117,9 @@ export async function POST(request: NextRequest) {
 			});
 		}
 
-		// Update user with new achievement and bonus XP
-		await db.collection("users").updateOne(
-			{ firebaseUid: user.userId },
+		// Update user with new achievement and bonus XP - use userData._id
+		const result = await db.collection("users").updateOne(
+			{ _id: userData._id },
 			{
 				$set: {
 					updatedAt: new Date(),
@@ -78,16 +129,28 @@ export async function POST(request: NextRequest) {
 			}
 		);
 
+		console.log("✅ Achievement unlock update result:", {
+			matchedCount: result.matchedCount,
+			modifiedCount: result.modifiedCount,
+		});
+
 		// Get updated user data
 		const updatedUser = await db
 			.collection("users")
 			.findOne(
-				{ firebaseUid: user.userId },
+				{ _id: userData._id },
 				{ projection: { achievements: 1, xp: 1 } }
 			);
 
 		// Get achievement name for response
 		const achievementName = getAchievementName(achievementId);
+
+		console.log("🎉 Achievement unlocked successfully:", {
+			achievementId,
+			achievementName,
+			newXP: updatedUser!.xp,
+			totalAchievements: updatedUser!.achievements?.length || 0,
+		});
 
 		const response = NextResponse.json({
 			success: true,
@@ -117,7 +180,7 @@ export async function POST(request: NextRequest) {
 
 		return response;
 	} catch (error: any) {
-		console.error("Unlock achievement error:", error);
+		console.error("❌ Unlock achievement error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
@@ -127,7 +190,7 @@ export async function POST(request: NextRequest) {
 		}
 
 		return NextResponse.json(
-			{ error: { message: "Server error" } },
+			{ error: { message: "Server error", details: error.message } },
 			{ status: 500 }
 		);
 	}
@@ -146,6 +209,9 @@ function getAchievementName(id: string): string {
 		night_owl: "Night Owl",
 		streak_warrior: "7-Day Streak",
 		streak_legend: "30-Day Streak",
+		first_goal_completed: "First Goal Completed",
+		goal_master: "Goal Master",
+		focus_champion: "Focus Champion",
 	};
 	return names[id] || "Achievement Unlocked";
 }
