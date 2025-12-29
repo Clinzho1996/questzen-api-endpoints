@@ -92,30 +92,32 @@ export async function GET(request: NextRequest) {
 
 		let foundUser: WithId<UserDocument> | null = null;
 
-		// 1. firebaseUid
-		foundUser = await users.findOne(
-			{ firebaseUid: user.userId },
-			{ projection: { password: 0 } }
-		);
-
-		// 2. email fallback
-		if (!foundUser && user.email) {
-			foundUser = await users.findOne(
-				{ email: user.email.toLowerCase().trim() },
-				{ projection: { password: 0 } }
-			);
-		}
-
-		// 3. ObjectId fallback
-		if (!foundUser && user.userId.length === 24) {
+		// 🔥 FIX: Check if userId is a MongoDB ObjectId (from custom JWT)
+		if (user.userId.length === 24) {
 			try {
 				foundUser = await users.findOne(
 					{ _id: new ObjectId(user.userId) },
 					{ projection: { password: 0 } }
 				);
 			} catch {
-				// ignore invalid ObjectId
+				// Invalid ObjectId, try next method
 			}
+		}
+
+		// 2. Try firebaseUid
+		if (!foundUser && user.userId) {
+			foundUser = await users.findOne(
+				{ firebaseUid: user.userId },
+				{ projection: { password: 0 } }
+			);
+		}
+
+		// 3. email fallback
+		if (!foundUser && user.email) {
+			foundUser = await users.findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{ projection: { password: 0 } }
+			);
 		}
 
 		if (!foundUser) {
@@ -126,6 +128,8 @@ export async function GET(request: NextRequest) {
 						debug: {
 							searchedId: user.userId,
 							searchedEmail: user.email,
+							idLength: user.userId.length,
+							looksLikeObjectId: user.userId.length === 24,
 						},
 					},
 				},
@@ -155,6 +159,7 @@ export async function GET(request: NextRequest) {
 			{ headers }
 		);
 	} catch (error) {
+		console.error("GET /user/me error:", error);
 		return NextResponse.json(
 			{ error: { message: "Server error" } },
 			{ status: 500, headers }
@@ -179,22 +184,81 @@ export async function PUT(request: NextRequest) {
 			...(body.photoURL && { photoURL: body.photoURL }),
 		};
 
-		const result = await users.updateOne(
-			{ firebaseUid: user.userId },
-			{ $set: updateData }
-		);
+		let result;
 
-		if (!result.matchedCount) {
+		// Try to update by multiple methods since we don't know what type of ID we have
+		// 1. Try by MongoDB ObjectId (from custom JWT)
+		if (user.userId && user.userId.length === 24) {
+			try {
+				result = await users.updateOne(
+					{ _id: new ObjectId(user.userId) },
+					{ $set: updateData }
+				);
+			} catch {
+				// Invalid ObjectId, try next method
+			}
+		}
+
+		// 2. Try by firebaseUid (if it exists)
+		if ((!result || result.matchedCount === 0) && user.userId) {
+			result = await users.updateOne(
+				{ firebaseUid: user.userId },
+				{ $set: updateData }
+			);
+		}
+
+		// 3. Try by email (if we have it)
+		if ((!result || result.matchedCount === 0) && user.email) {
+			result = await users.updateOne(
+				{ email: user.email.toLowerCase().trim() },
+				{ $set: updateData }
+			);
+		}
+
+		if (!result || !result.matchedCount) {
 			return NextResponse.json(
-				{ error: { message: "User not found" } },
+				{
+					error: {
+						message: "User not found",
+						debug: {
+							userId: user.userId,
+							email: user.email,
+							hasFirebaseUid: !!user.userId,
+							hasEmail: !!user.email,
+						},
+					},
+				},
 				{ status: 404, headers }
 			);
 		}
 
-		const updatedUser = await users.findOne(
-			{ firebaseUid: user.userId },
-			{ projection: { password: 0 } }
-		);
+		// Find the updated user using the same logic
+		let updatedUser: WithId<UserDocument> | null = null;
+
+		if (user.userId && user.userId.length === 24) {
+			try {
+				updatedUser = await users.findOne(
+					{ _id: new ObjectId(user.userId) },
+					{ projection: { password: 0 } }
+				);
+			} catch {
+				// ignore
+			}
+		}
+
+		if (!updatedUser && user.userId) {
+			updatedUser = await users.findOne(
+				{ firebaseUid: user.userId },
+				{ projection: { password: 0 } }
+			);
+		}
+
+		if (!updatedUser && user.email) {
+			updatedUser = await users.findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{ projection: { password: 0 } }
+			);
+		}
 
 		if (!updatedUser) {
 			return NextResponse.json(
@@ -211,12 +275,24 @@ export async function PUT(request: NextRequest) {
 				displayName: updatedUser.displayName,
 				photoURL: updatedUser.photoURL,
 				subscriptionTier: updatedUser.subscriptionTier ?? "free",
+				streak: updatedUser.streak ?? 0,
+				longestStreak: updatedUser.longestStreak ?? 0,
+				totalFocusMinutes: updatedUser.totalFocusMinutes ?? 0,
+				level: updatedUser.level ?? 1,
+				xp: updatedUser.xp ?? 0,
+				achievements: updatedUser.achievements ?? [],
 			},
 			{ headers }
 		);
-	} catch {
+	} catch (error: any) {
+		console.error("PUT /user/me error:", error);
 		return NextResponse.json(
-			{ error: { message: "Server error" } },
+			{
+				error: {
+					message: "Server error",
+					details: error.message,
+				},
+			},
 			{ status: 500, headers }
 		);
 	}
