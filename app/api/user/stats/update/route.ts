@@ -1,5 +1,7 @@
+// app/api/user/stats/update/route.ts - FIXED VERSION
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 // Handle OPTIONS for CORS
@@ -42,24 +44,108 @@ export async function POST(request: NextRequest) {
 			focusSessionsChange = 0,
 			totalMinutesChange = 0,
 			achievementId,
+			action,
 		} = body;
 
 		const db = await getDatabase();
 
-		// Find user by firebaseUid (which should match user.userId from JWT)
-		const userData = await db.collection("users").findOne(
-			{ firebaseUid: user.userId },
-			{
-				projection: { _id: 1, xp: 1, level: 1, completedGoals: 1, streak: 1 },
+		console.log("📊 Update stats request:", {
+			userId: user.userId,
+			email: user.email,
+			xpChange,
+			completedChange,
+			action,
+			goalId,
+		});
+
+		// Find user by MULTIPLE methods (just like in your other routes)
+		let userData = null;
+
+		// Try as MongoDB ObjectId first (from custom JWT)
+		if (user.userId && user.userId.length === 24) {
+			try {
+				userData = await db.collection("users").findOne(
+					{ _id: new ObjectId(user.userId) },
+					{
+						projection: {
+							_id: 1,
+							xp: 1,
+							level: 1,
+							completedGoals: 1,
+							streak: 1,
+							focusSessions: 1,
+							totalFocusMinutes: 1,
+							achievements: 1,
+							firebaseUid: 1,
+							email: 1,
+						},
+					}
+				);
+			} catch (error) {
+				console.log("Not a valid ObjectId:", user.userId);
 			}
-		);
+		}
+
+		// Try as firebaseUid if not found
+		if (!userData && user.userId) {
+			userData = await db.collection("users").findOne(
+				{ firebaseUid: user.userId },
+				{
+					projection: {
+						_id: 1,
+						xp: 1,
+						level: 1,
+						completedGoals: 1,
+						streak: 1,
+						focusSessions: 1,
+						totalFocusMinutes: 1,
+						achievements: 1,
+						firebaseUid: 1,
+						email: 1,
+					},
+				}
+			);
+		}
+
+		// Try by email as last resort
+		if (!userData && user.email) {
+			userData = await db.collection("users").findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{
+					projection: {
+						_id: 1,
+						xp: 1,
+						level: 1,
+						completedGoals: 1,
+						streak: 1,
+						focusSessions: 1,
+						totalFocusMinutes: 1,
+						achievements: 1,
+						firebaseUid: 1,
+						email: 1,
+					},
+				}
+			);
+		}
 
 		if (!userData) {
+			console.error("❌ User not found with any method:", {
+				userId: user.userId,
+				email: user.email,
+			});
 			return NextResponse.json(
 				{ error: { message: "User not found" } },
 				{ status: 404 }
 			);
 		}
+
+		console.log("👤 Found user:", {
+			_id: userData._id,
+			email: userData.email,
+			currentXP: userData.xp || 0,
+			currentLevel: userData.level || 1,
+			currentCompleted: userData.completedGoals || 0,
+		});
 
 		// Calculate new values
 		const currentXP = userData.xp || 0;
@@ -98,34 +184,51 @@ export async function POST(request: NextRequest) {
 			}
 		}
 
-		// Update user in database
+		console.log("📝 Updating user with:", updateData);
+
+		// Update user in database - use the found user's _id
 		const result = await db
 			.collection("users")
-			.updateOne({ firebaseUid: user.userId }, { $set: updateData });
+			.updateOne({ _id: userData._id }, { $set: updateData });
+
+		console.log("✅ Update result:", {
+			matchedCount: result.matchedCount,
+			modifiedCount: result.modifiedCount,
+		});
 
 		if (result.modifiedCount === 0) {
-			console.warn("User stats were not modified (possibly same values)");
+			console.warn("⚠️ User stats were not modified (possibly same values)");
 		}
 
 		// Also update the goal completion status in goals collection if goalId provided
 		if (goalId && completedChange !== 0) {
-			const completedStatus = completedChange > 0;
+			try {
+				const completedStatus = completedChange > 0;
+				console.log("🎯 Updating goal completion:", {
+					goalId,
+					completedStatus,
+				});
 
-			await db.collection("goals").updateOne(
-				{ _id: goalId },
-				{
-					$set: {
-						completed: completedStatus,
-						progress: completedStatus ? 100 : 0,
-						updatedAt: new Date(),
-					},
-				}
-			);
+				await db.collection("goals").updateOne(
+					{ _id: new ObjectId(goalId) },
+					{
+						$set: {
+							completed: completedStatus,
+							progress: completedStatus ? 100 : 0,
+							updatedAt: new Date(),
+							...(completedStatus && { completedAt: new Date() }),
+						},
+					}
+				);
+			} catch (error) {
+				console.error("❌ Error updating goal:", error);
+				// Don't fail the whole request if goal update fails
+			}
 		}
 
-		// Return updated user stats
+		// Get updated user data
 		const updatedUser = await db.collection("users").findOne(
-			{ firebaseUid: user.userId },
+			{ _id: userData._id },
 			{
 				projection: {
 					_id: 1,
@@ -159,6 +262,8 @@ export async function POST(request: NextRequest) {
 							to: newLevel,
 					  }
 					: null,
+			xpChange,
+			completedChange,
 		});
 
 		// Add CORS headers
@@ -176,7 +281,7 @@ export async function POST(request: NextRequest) {
 
 		return response;
 	} catch (error: any) {
-		console.error("Update user stats error:", error);
+		console.error("❌ Update user stats error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
