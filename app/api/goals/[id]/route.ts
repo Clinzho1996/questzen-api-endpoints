@@ -4,6 +4,7 @@ import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
+// app/api/goals/[id]/route.ts - FIXED PATCH FUNCTION
 export async function PATCH(
 	request: NextRequest,
 	context: { params: Promise<{ id: string }> }
@@ -17,99 +18,120 @@ export async function PATCH(
 		console.log("🔄 PATCH Goal Request:", {
 			goalId: params.id,
 			userId: user.userId,
+			email: user.email,
 			updates: body,
 		});
 
-		// Get current user info
-		const currentUser = await db
-			.collection("users")
-			.findOne(
-				{ firebaseUid: user.userId },
-				{ projection: { _id: 1, firebaseUid: 1 } }
-			);
+		// Get current user info - TRY MULTIPLE WAYS
+		const currentUser = await db.collection("users").findOne({
+			$or: [
+				{ _id: new ObjectId(user.userId) }, // Try as MongoDB ObjectId
+				{ firebaseUid: user.userId }, // Try as Firebase UID
+				{ email: user.email }, // Try by email
+			],
+		});
 
 		if (!currentUser) {
+			console.error("❌ User not found in database:", {
+				userId: user.userId,
+				email: user.email,
+			});
 			return NextResponse.json(
 				{ error: { message: "User not found" } },
 				{ status: 404 }
 			);
 		}
 
-		const userId = currentUser.firebaseUid || currentUser._id.toString();
+		console.log("👤 Found user:", {
+			_id: currentUser._id,
+			firebaseUid: currentUser.firebaseUid,
+			email: currentUser.email,
+		});
+
+		// Get all possible user identifiers
 		const userIdObjectId = currentUser._id;
+		const userIdString = currentUser._id.toString();
+		const firebaseUid = currentUser.firebaseUid;
 
 		// Verify goal belongs to user OR user is a collaborator
 		const goal = await db.collection("goals").findOne({
 			_id: new ObjectId(params.id),
 			$or: [
+				// Check as MongoDB ObjectId
 				{ userId: userIdObjectId },
-				{ userId: userId },
-				{ "collaborators.userId": userId },
+				// Check as string version of ObjectId
+				{ userId: userIdString },
+				// Check as Firebase UID if user has one
+				...(firebaseUid ? [{ userId: firebaseUid }] : []),
+				// Check as collaborator with ObjectId
 				{ "collaborators.userId": userIdObjectId.toString() },
+				// Check as collaborator with string
+				{ "collaborators.userId": userIdString },
+				// Check as collaborator with Firebase UID
+				...(firebaseUid ? [{ "collaborators.userId": firebaseUid }] : []),
 			],
 		});
 
 		if (!goal) {
+			// Log what we searched for to debug
+			const searchedIds = [
+				userIdObjectId,
+				userIdString,
+				...(firebaseUid ? [firebaseUid] : []),
+			];
+
+			console.error("❌ Goal not found or no access:", {
+				searchedIds,
+				goalId: params.id,
+			});
+
 			return NextResponse.json(
 				{ error: { message: "Goal not found or no access" } },
 				{ status: 404 }
 			);
 		}
 
-		// Check if user is owner (can update all fields) or collaborator (limited updates)
+		// Check if user is owner
 		const isOwner =
 			goal.userId?.toString() === userIdObjectId?.toString() ||
-			goal.userId === userId;
+			goal.userId === userIdString ||
+			(firebaseUid && goal.userId === firebaseUid);
+
+		console.log("🔍 User role check:", {
+			isOwner,
+			goalUserId: goal.userId,
+			userIdentifiers: {
+				userIdObjectId: userIdObjectId?.toString(),
+				userIdString,
+				firebaseUid,
+			},
+		});
 
 		// Build update object
 		const updateData: any = {
 			updatedAt: new Date(),
 		};
 
-		// Handle dueDate and dueTime
-		if (body.dueDate !== undefined || body.dueTime !== undefined) {
-			console.log("📅 Processing date/time update:", {
-				dueDate: body.dueDate,
-				dueTime: body.dueTime,
-				existingDueDate: goal.dueDate,
-				existingDueTime: goal.dueTime,
-			});
-
-			// Get existing or new values
-			const newDueDate =
-				body.dueDate !== undefined ? body.dueDate : goal.dueDate;
-			const newDueTime =
-				body.dueTime !== undefined ? body.dueTime : goal.dueTime;
-
-			// Update separate fields
-			updateData.dueDate = newDueDate;
-			updateData.dueTime = newDueTime;
-
-			// Update combined deadline field
-			if (newDueDate && newDueTime) {
-				// Combine date and time into a proper Date object
-				try {
-					const dateTimeString = `${newDueDate}T${newDueTime}`;
-					updateData.deadline = new Date(dateTimeString);
-					console.log("📅 Combined deadline:", updateData.deadline);
-				} catch (error) {
-					console.error("❌ Error parsing date/time:", error);
-					// Fallback to just date
-					updateData.deadline = new Date(newDueDate);
+		// Handle completion toggle - ALLOW BOTH OWNERS AND COLLABORATORS
+		if (body.completed !== undefined) {
+			updateData.completed = body.completed;
+			if (body.completed) {
+				updateData.completedAt = new Date();
+				// Auto-set progress to 100% when completed
+				if (body.progress === undefined) {
+					updateData.progress = 100;
 				}
-			} else if (newDueDate) {
-				// Only date provided
-				updateData.deadline = new Date(newDueDate);
 			} else {
-				// No date/time, clear deadline
-				updateData.deadline = null;
+				updateData.completedAt = null;
 			}
-		} else if (body.deadline !== undefined) {
-			// Legacy support for deadline field
-			updateData.deadline = body.deadline ? new Date(body.deadline) : null;
 		}
 
-		// Owners can update all fields
+		// Handle progress updates - ALLOW BOTH OWNERS AND COLLABORATORS
+		if (body.progress !== undefined) {
+			updateData.progress = body.progress;
+		}
+
+		// Owners can update additional fields
 		if (isOwner) {
 			if (body.title !== undefined) updateData.title = body.title;
 			if (body.description !== undefined)
@@ -117,44 +139,9 @@ export async function PATCH(
 			if (body.category !== undefined) updateData.category = body.category;
 			if (body.priority !== undefined) updateData.priority = body.priority;
 			if (body.tasks !== undefined) updateData.tasks = body.tasks;
-
-			// Handle progress updates
-			if (body.progress !== undefined) {
-				updateData.progress = body.progress;
-			}
-
-			if (body.completed !== undefined) {
-				updateData.completed = body.completed;
-				if (body.completed) {
-					updateData.completedAt = new Date();
-					// Auto-set progress to 100% when completed
-					if (body.progress === undefined) {
-						updateData.progress = 100;
-					}
-				}
-			}
-		} else {
-			// Collaborators can only update tasks and completion status
-			if (body.tasks !== undefined) updateData.tasks = body.tasks;
-
-			if (body.completed !== undefined) {
-				updateData.completed = body.completed;
-				if (body.completed) {
-					updateData.completedAt = new Date();
-					// Auto-set progress to 100% when completed
-					if (body.progress === undefined) {
-						updateData.progress = 100;
-					}
-				}
-			}
 		}
 
-		// Also handle progress updates separately (for toggleGoal)
-		if (body.progress !== undefined) {
-			updateData.progress = body.progress;
-		}
-
-		console.log("📝 Update data being applied:", updateData);
+		console.log("📝 Applying updates:", updateData);
 
 		// Perform the update
 		await db
@@ -180,7 +167,6 @@ export async function PATCH(
 			_id: undefined,
 			userId: updatedGoal.userId?.toString?.(),
 			role: isOwner ? "owner" : "collaborator",
-			// Ensure dueDate and dueTime are returned
 			dueDate: updatedGoal.dueDate,
 			dueTime: updatedGoal.dueTime,
 			deadline: updatedGoal.deadline?.toISOString?.(),
@@ -188,11 +174,9 @@ export async function PATCH(
 			updatedAt: updatedGoal.updatedAt?.toISOString?.(),
 		};
 
-		console.log("✅ Updated goal response:", {
+		console.log("✅ Goal updated successfully:", {
 			id: responseGoal.id,
-			dueDate: responseGoal.dueDate,
-			dueTime: responseGoal.dueTime,
-			deadline: responseGoal.deadline,
+			role: responseGoal.role,
 		});
 
 		return NextResponse.json(responseGoal);
