@@ -31,6 +31,13 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
+		if (user.provider === "google" || user.provider === "firebase") {
+			return NextResponse.json(
+				{ error: { message: "Please sign in with Google" } },
+				{ status: 400 }
+			);
+		}
+
 		// 🔥 CRITICAL FIX: Check if password exists
 		if (!user.password) {
 			console.error("User found but password field is missing:", user.email);
