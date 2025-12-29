@@ -27,6 +27,8 @@ interface UserDocument {
 	password?: string;
 	updatedAt?: Date;
 	createdAt?: Date;
+	completedGoals: number;
+	focusSessions: number;
 }
 
 interface AuthUser {
@@ -97,7 +99,34 @@ export async function GET(request: NextRequest) {
 			try {
 				foundUser = await users.findOne(
 					{ _id: new ObjectId(user.userId) },
-					{ projection: { password: 0 } }
+					{
+						projection: {
+							password: 0,
+							// Include all the stat fields explicitly
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+							subscriptionTier: 1,
+							streak: 1,
+							longestStreak: 1,
+							totalFocusMinutes: 1,
+							level: 1,
+							xp: 1,
+							achievements: 1,
+							stripeCustomerId: 1,
+							stripeSubscriptionId: 1,
+							subscriptionStatus: 1,
+							currentPeriodEnd: 1,
+							// ADD THESE CRITICAL FIELDS:
+							completedGoals: 1,
+							focusSessions: 1,
+							// Add any other fields that might exist
+							updatedAt: 1,
+							createdAt: 1,
+						},
+					}
 				);
 			} catch {
 				// Invalid ObjectId, try next method
@@ -108,7 +137,33 @@ export async function GET(request: NextRequest) {
 		if (!foundUser && user.userId) {
 			foundUser = await users.findOne(
 				{ firebaseUid: user.userId },
-				{ projection: { password: 0 } }
+				{
+					projection: {
+						password: 0,
+						// Include all the stat fields explicitly
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+						subscriptionTier: 1,
+						streak: 1,
+						longestStreak: 1,
+						totalFocusMinutes: 1,
+						level: 1,
+						xp: 1,
+						achievements: 1,
+						stripeCustomerId: 1,
+						stripeSubscriptionId: 1,
+						subscriptionStatus: 1,
+						currentPeriodEnd: 1,
+						// ADD THESE CRITICAL FIELDS:
+						completedGoals: 1,
+						focusSessions: 1,
+						updatedAt: 1,
+						createdAt: 1,
+					},
+				}
 			);
 		}
 
@@ -116,7 +171,33 @@ export async function GET(request: NextRequest) {
 		if (!foundUser && user.email) {
 			foundUser = await users.findOne(
 				{ email: user.email.toLowerCase().trim() },
-				{ projection: { password: 0 } }
+				{
+					projection: {
+						password: 0,
+						// Include all the stat fields explicitly
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+						subscriptionTier: 1,
+						streak: 1,
+						longestStreak: 1,
+						totalFocusMinutes: 1,
+						level: 1,
+						xp: 1,
+						achievements: 1,
+						stripeCustomerId: 1,
+						stripeSubscriptionId: 1,
+						subscriptionStatus: 1,
+						currentPeriodEnd: 1,
+						// ADD THESE CRITICAL FIELDS:
+						completedGoals: 1,
+						focusSessions: 1,
+						updatedAt: 1,
+						createdAt: 1,
+					},
+				}
 			);
 		}
 
@@ -137,6 +218,7 @@ export async function GET(request: NextRequest) {
 			);
 		}
 
+		// Return ALL stats fields with proper defaults
 		return NextResponse.json(
 			{
 				id: foundUser._id.toString(),
@@ -151,10 +233,16 @@ export async function GET(request: NextRequest) {
 				level: foundUser.level ?? 1,
 				xp: foundUser.xp ?? 0,
 				achievements: foundUser.achievements ?? [],
+				// ADD THESE CRITICAL FIELDS WITH DEFAULTS:
+				completedGoals: foundUser.completedGoals ?? 0,
+				focusSessions: foundUser.focusSessions ?? 0,
 				stripeCustomerId: foundUser.stripeCustomerId,
 				stripeSubscriptionId: foundUser.stripeSubscriptionId,
 				subscriptionStatus: foundUser.subscriptionStatus,
 				currentPeriodEnd: foundUser.currentPeriodEnd,
+				// Optional: include timestamps
+				updatedAt: foundUser.updatedAt,
+				createdAt: foundUser.createdAt,
 			},
 			{ headers }
 		);
@@ -281,6 +369,13 @@ export async function PUT(request: NextRequest) {
 				level: updatedUser.level ?? 1,
 				xp: updatedUser.xp ?? 0,
 				achievements: updatedUser.achievements ?? [],
+				// ADD THESE CRITICAL FIELDS:
+				completedGoals: updatedUser.completedGoals ?? 0,
+				focusSessions: updatedUser.focusSessions ?? 0,
+				stripeCustomerId: updatedUser.stripeCustomerId,
+				stripeSubscriptionId: updatedUser.stripeSubscriptionId,
+				subscriptionStatus: updatedUser.subscriptionStatus,
+				currentPeriodEnd: updatedUser.currentPeriodEnd,
 			},
 			{ headers }
 		);
