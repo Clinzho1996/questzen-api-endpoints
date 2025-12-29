@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { paystack, PLAN_CODES } from "@/lib/paystack";
