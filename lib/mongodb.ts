@@ -1,33 +1,20 @@
+// lib/mongodb.ts
 import { Db, MongoClient } from "mongodb";
 
-const uri = process.env.MONGODB_URI;
-const options = {};
+let client: MongoClient | null = null;
+let db: Db | null = null;
 
-let client: MongoClient;
-let clientPromise: Promise<MongoClient>;
+export async function getDatabase(): Promise<Db> {
+	if (db) return db;
 
-declare global {
-	var _mongoClientPromise: Promise<MongoClient> | undefined;
-}
-
-if (process.env.NODE_ENV === "development") {
-	if (!global._mongoClientPromise) {
-		if (!uri) {
-			throw new Error("MONGODB_URI is not defined");
-		}
-		client = new MongoClient(uri, options);
-		global._mongoClientPromise = client.connect();
-	}
-	clientPromise = global._mongoClientPromise;
-} else {
+	const uri = process.env.MONGODB_URI;
 	if (!uri) {
 		throw new Error("MONGODB_URI is not defined");
 	}
-	client = new MongoClient(uri, options);
-	clientPromise = client.connect();
-}
 
-export async function getDatabase(): Promise<Db> {
-	const client = await clientPromise;
-	return client.db("questzen");
+	client = new MongoClient(uri);
+	await client.connect();
+
+	db = client.db("questzen");
+	return db;
 }
