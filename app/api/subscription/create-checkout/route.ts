@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
 		const transaction = await paystack.initializeTransaction({
 			email: userData.email,
-			amount: plan === "monthly" ? 500000 : 5000000,
+			amount: plan === "monthly" ? 200000 : 2100000,
 			plan: planCode,
 			metadata: {
 				userId: user.userId,
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 			},
 			callback_url: `${
 				process.env.FRONTEND_URL || "http://localhost:3001"
-			}/upgrade/callback?success=true`,
+			}/upgrade/callback`,
 			reference: `QUESTZEN_${Date.now()}_${user.userId.substring(0, 8)}`,
 		});
 
