@@ -1,57 +1,50 @@
+export const runtime = "nodejs";
+
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
-import { paystack, PLAN_CODES } from "@/lib/paystack";
+import { getPaystack, PLAN_CODES } from "@/lib/paystack";
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
+
 export async function POST(request: NextRequest) {
 	try {
+		const paystack = getPaystack();
+
 		const user = await requireAuth(request);
 		const body = await request.json();
-		const { plan } = body; // 'monthly' or 'yearly'
+		const { plan } = body;
 
 		if (!plan || !["monthly", "yearly"].includes(plan)) {
 			return NextResponse.json(
-				{
-					error: {
-						message: "Invalid plan",
-					},
-				},
-				{
-					status: 400,
-				}
+				{ error: { message: "Invalid plan" } },
+				{ status: 400 }
 			);
 		}
+
 		const db = await getDatabase();
 		const userData = await db.collection("users").findOne({
 			_id: new ObjectId(user.userId),
 		});
+
 		if (!userData) {
 			return NextResponse.json(
-				{
-					error: {
-						message: "User not found",
-					},
-				},
-				{
-					status: 404,
-				}
+				{ error: { message: "User not found" } },
+				{ status: 404 }
 			);
 		}
 
-		// Get or create Stripe customer
-		let paystackCustomerCode = userData.paystackCustomerCode; // New field
+		let paystackCustomerCode = userData.paystackCustomerCode;
+
 		if (!paystackCustomerCode) {
 			const customer = await paystack.customer.create({
 				email: userData.email,
 				first_name: userData.displayName?.split(" ")[0] || "Customer",
 				last_name: userData.displayName?.split(" ")[1] || "",
-				metadata: {
-					userId: user.userId,
-				},
+				metadata: { userId: user.userId },
 			});
+
 			paystackCustomerCode = customer.data.customer_code;
 
-			// Save the Paystack customer code to your database
 			await db
 				.collection("users")
 				.updateOne(
@@ -60,7 +53,6 @@ export async function POST(request: NextRequest) {
 				);
 		}
 
-		// Initialize a Paystack transaction for subscription
 		const planCode =
 			plan === "monthly"
 				? PLAN_CODES.premium_monthly
@@ -68,43 +60,32 @@ export async function POST(request: NextRequest) {
 
 		const transaction = await paystack.transaction.initialize({
 			email: userData.email,
-			amount: plan === "monthly" ? 500000 : 5000000, // Amount in kobo (e.g., 5000 NGN = 500000 kobo)
+			amount: plan === "monthly" ? 500000 : 5000000,
 			plan: planCode,
 			metadata: {
 				userId: user.userId,
-				plan: plan,
+				plan,
 				customerCode: paystackCustomerCode,
 			},
 			callback_url: `${process.env.FRONTEND_URL}/upgrade?success=true`,
 		});
 
 		return NextResponse.json({
-			authorizationUrl: transaction.data.authorization_url, // Paystack uses authorization_url
-			reference: transaction.data.reference, // For verifying payment
+			authorizationUrl: transaction.data.authorization_url,
+			reference: transaction.data.reference,
 		});
 	} catch (error: any) {
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
-				{
-					error: {
-						message: "Unauthorized",
-					},
-				},
-				{
-					status: 401,
-				}
+				{ error: { message: "Unauthorized" } },
+				{ status: 401 }
 			);
 		}
+
 		console.error("Create checkout error:", error);
 		return NextResponse.json(
-			{
-				error: {
-					message: "Server error",
-				},
-			},
-			{
-				status: 500,
-			}
+			{ error: { message: "Server error" } },
+			{ status: 500 }
 		);
 	}
 }
