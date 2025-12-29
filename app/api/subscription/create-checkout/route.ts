@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
 			},
 			callback_url: `${
 				process.env.FRONTEND_URL || "http://localhost:3001"
-			}/upgrade?success=true`,
+			}/upgrade/callback?success=true`,
 			reference: `QUESTZEN_${Date.now()}_${user.userId.substring(0, 8)}`,
 		});
 
