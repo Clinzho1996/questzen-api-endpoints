@@ -27,8 +27,9 @@ interface UserDocument {
 	password?: string;
 	updatedAt?: Date;
 	createdAt?: Date;
-	completedGoals: number;
-	focusSessions: number;
+	// Add these if they exist in your schema
+	completedGoals?: number;
+	focusSessions?: number;
 }
 
 interface AuthUser {
@@ -37,7 +38,7 @@ interface AuthUser {
 }
 
 /* =======================
-   CORS Helper
+   Helper Functions
 ======================= */
 
 function getCorsHeaders(origin: string | null): Headers {
@@ -65,6 +66,9 @@ function getCorsHeaders(origin: string | null): Headers {
 
 	return headers;
 }
+
+// Clean projection that only excludes password
+const excludePassword = { projection: { password: 0 } };
 
 /* =======================
    Route Handlers
@@ -94,113 +98,65 @@ export async function GET(request: NextRequest) {
 
 		let foundUser: WithId<UserDocument> | null = null;
 
-		// 🔥 FIX: Check if userId is a MongoDB ObjectId (from custom JWT)
-		if (user.userId.length === 24) {
-			try {
-				foundUser = await users.findOne(
-					{ _id: new ObjectId(user.userId) },
-					{
-						projection: {
-							password: 0,
-							// Include all the stat fields explicitly
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-							subscriptionTier: 1,
-							streak: 1,
-							longestStreak: 1,
-							totalFocusMinutes: 1,
-							level: 1,
-							xp: 1,
-							achievements: 1,
-							stripeCustomerId: 1,
-							stripeSubscriptionId: 1,
-							subscriptionStatus: 1,
-							currentPeriodEnd: 1,
-							// ADD THESE CRITICAL FIELDS:
-							completedGoals: 1,
-							focusSessions: 1,
-							// Add any other fields that might exist
-							updatedAt: 1,
-							createdAt: 1,
-						},
+		console.log("🔍 Looking for user with:", {
+			userId: user.userId,
+			email: user.email,
+			userIdLength: user.userId?.length,
+			isObjectId: user.userId?.length === 24,
+		});
+
+		// Try multiple lookup methods
+		const lookupMethods = [
+			// 1. Try as MongoDB ObjectId
+			async () => {
+				if (user.userId && user.userId.length === 24) {
+					try {
+						return await users.findOne(
+							{ _id: new ObjectId(user.userId) },
+							excludePassword
+						);
+					} catch {
+						return null;
 					}
-				);
-			} catch {
-				// Invalid ObjectId, try next method
+				}
+				return null;
+			},
+
+			// 2. Try as firebaseUid
+			async () => {
+				if (user.userId) {
+					return await users.findOne(
+						{ firebaseUid: user.userId },
+						excludePassword
+					);
+				}
+				return null;
+			},
+
+			// 3. Try by email
+			async () => {
+				if (user.email) {
+					return await users.findOne(
+						{ email: user.email.toLowerCase().trim() },
+						excludePassword
+					);
+				}
+				return null;
+			},
+		];
+
+		// Execute lookup methods in sequence
+		for (const method of lookupMethods) {
+			if (!foundUser) {
+				foundUser = await method();
 			}
 		}
 
-		// 2. Try firebaseUid
-		if (!foundUser && user.userId) {
-			foundUser = await users.findOne(
-				{ firebaseUid: user.userId },
-				{
-					projection: {
-						password: 0,
-						// Include all the stat fields explicitly
-						_id: 1,
-						firebaseUid: 1,
-						email: 1,
-						displayName: 1,
-						photoURL: 1,
-						subscriptionTier: 1,
-						streak: 1,
-						longestStreak: 1,
-						totalFocusMinutes: 1,
-						level: 1,
-						xp: 1,
-						achievements: 1,
-						stripeCustomerId: 1,
-						stripeSubscriptionId: 1,
-						subscriptionStatus: 1,
-						currentPeriodEnd: 1,
-						// ADD THESE CRITICAL FIELDS:
-						completedGoals: 1,
-						focusSessions: 1,
-						updatedAt: 1,
-						createdAt: 1,
-					},
-				}
-			);
-		}
-
-		// 3. email fallback
-		if (!foundUser && user.email) {
-			foundUser = await users.findOne(
-				{ email: user.email.toLowerCase().trim() },
-				{
-					projection: {
-						// Include all the stat fields explicitly
-						_id: 1,
-						firebaseUid: 1,
-						email: 1,
-						displayName: 1,
-						photoURL: 1,
-						subscriptionTier: 1,
-						streak: 1,
-						longestStreak: 1,
-						totalFocusMinutes: 1,
-						level: 1,
-						xp: 1,
-						achievements: 1,
-						stripeCustomerId: 1,
-						stripeSubscriptionId: 1,
-						subscriptionStatus: 1,
-						currentPeriodEnd: 1,
-						// ADD THESE CRITICAL FIELDS:
-						completedGoals: 1,
-						focusSessions: 1,
-						updatedAt: 1,
-						createdAt: 1,
-					},
-				}
-			);
-		}
-
 		if (!foundUser) {
+			console.error("❌ User not found with any method:", {
+				userId: user.userId,
+				email: user.email,
+			});
 			return NextResponse.json(
 				{
 					error: {
@@ -208,8 +164,6 @@ export async function GET(request: NextRequest) {
 						debug: {
 							searchedId: user.userId,
 							searchedEmail: user.email,
-							idLength: user.userId.length,
-							looksLikeObjectId: user.userId.length === 24,
 						},
 					},
 				},
@@ -217,7 +171,14 @@ export async function GET(request: NextRequest) {
 			);
 		}
 
-		// Return ALL stats fields with proper defaults
+		console.log("✅ User found:", {
+			id: foundUser._id.toString(),
+			email: foundUser.email,
+			focusSessions: foundUser.focusSessions,
+			completedGoals: foundUser.completedGoals,
+		});
+
+		// Return user data with proper defaults
 		return NextResponse.json(
 			{
 				id: foundUser._id.toString(),
@@ -232,23 +193,22 @@ export async function GET(request: NextRequest) {
 				level: foundUser.level ?? 1,
 				xp: foundUser.xp ?? 0,
 				achievements: foundUser.achievements ?? [],
-				// ADD THESE CRITICAL FIELDS WITH DEFAULTS:
+				// Critical: Include these fields with defaults
 				completedGoals: foundUser.completedGoals ?? 0,
 				focusSessions: foundUser.focusSessions ?? 0,
 				stripeCustomerId: foundUser.stripeCustomerId,
 				stripeSubscriptionId: foundUser.stripeSubscriptionId,
 				subscriptionStatus: foundUser.subscriptionStatus,
 				currentPeriodEnd: foundUser.currentPeriodEnd,
-				// Optional: include timestamps
 				updatedAt: foundUser.updatedAt,
 				createdAt: foundUser.createdAt,
 			},
 			{ headers }
 		);
-	} catch (error) {
-		console.error("GET /user/me error:", error);
+	} catch (error: any) {
+		console.error("❌ GET /user/me error:", error);
 		return NextResponse.json(
-			{ error: { message: "Server error" } },
+			{ error: { message: "Server error", details: error.message } },
 			{ status: 500, headers }
 		);
 	}
