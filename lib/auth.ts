@@ -4,10 +4,6 @@ import { ObjectId } from "mongodb";
 import { NextRequest } from "next/server";
 import { getDatabase } from "./mongodb";
 
-if (!process.env.JWT_SECRET) {
-	throw new Error("Please add JWT_SECRET to .env");
-}
-
 export interface AuthUser {
 	userId: string; // Can be firebaseUid OR MongoDB _id
 	email: string;
