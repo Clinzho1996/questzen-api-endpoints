@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 // lib/auth.ts - Simplified version
 import jwt from "jsonwebtoken";
 import { ObjectId } from "mongodb";
