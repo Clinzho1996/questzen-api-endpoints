@@ -6,7 +6,7 @@ export interface Task {
 	createdAt: Date;
 }
 export interface Goal {
-	_id?: ObjectId;
+	_id?: ObjectId | string;
 	userId: ObjectId;
 	title?: string;
 	description: string;
