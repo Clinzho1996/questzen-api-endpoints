@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { stripe } from '@/lib/stripe';
+import { stripe } from '@/lib/paystack';
 import { getDatabase } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import Stripe from 'stripe';

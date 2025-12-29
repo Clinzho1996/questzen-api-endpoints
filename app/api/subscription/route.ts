@@ -15,18 +15,17 @@ export async function GET(request: NextRequest) {
 		}
 
 		const db = await getDatabase();
-		const userData = await db
-			.collection("users")
-			.findOne(
-				{ _id: new ObjectId(user.userId) },
-				{
-					projection: {
-						subscriptionTier: 1,
-						stripeCustomerId: 1,
-						subscriptionStatus: 1,
-					},
-				}
-			);
+		const userData = await db.collection("users").findOne(
+			{ _id: new ObjectId(user.userId) },
+			{
+				projection: {
+					subscriptionTier: 1,
+					paystackCustomerCode: 1,
+					subscriptionStatus: 1,
+					paystackSubscriptionCode: 1,
+				},
+			}
+		);
 
 		if (!userData) {
 			return NextResponse.json(
