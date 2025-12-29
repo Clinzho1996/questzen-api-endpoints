@@ -1,5 +1,5 @@
 // app/api/subscription/create-checkout/route.ts
-export const runtime = "edge"; // Use Edge runtime for better compatibility
+export const runtime = "node"; // Use Edge runtime for better compatibility
 
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
