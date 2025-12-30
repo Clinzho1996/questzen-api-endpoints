@@ -582,3 +582,256 @@ export async function sendCollaborationEmail(
 		throw error;
 	}
 }
+
+// NEW: Account deletion confirmation email
+export async function sendAccountDeletionEmail(
+	email: string,
+	displayName: string
+) {
+	try {
+		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+		const supportEmail = process.env.SUPPORT_EMAIL || "support@questzen.app";
+		const daysToRecover = 30; // Recovery period in days
+
+		const html = `
+			<!DOCTYPE html>
+			<html>
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>Account Deleted - QuestZen AI</title>
+				<style>
+					body { 
+						font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+						line-height: 1.6; 
+						color: #2d3748; 
+						margin: 0;
+						padding: 0;
+						background-color: #f7fafc;
+					}
+					.container { 
+						max-width: 600px; 
+						margin: 0 auto; 
+						background: white;
+						border-radius: 12px;
+						overflow: hidden;
+						box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+					}
+					.header { 
+						background: linear-gradient(135deg, #e53e3e 0%, #c53030 100%); 
+						color: white; 
+						padding: 40px 30px; 
+						text-align: center; 
+					}
+					.content { 
+						padding: 40px 30px; 
+					}
+					.alert { 
+						background: #fed7d7; 
+						padding: 20px; 
+						border-radius: 8px; 
+						margin: 25px 0; 
+						border-left: 4px solid #e53e3e;
+						color: #742a2a;
+					}
+					.info { 
+						background: #e6fffa; 
+						padding: 20px; 
+						border-radius: 8px; 
+						margin: 25px 0; 
+						border-left: 4px solid #38b2ac;
+						color: #234e52;
+					}
+					.footer { 
+						text-align: center; 
+						margin-top: 40px; 
+						color: #718096; 
+						font-size: 14px; 
+						border-top: 1px solid #e2e8f0;
+						padding-top: 30px;
+					}
+					.button { 
+						display: inline-block; 
+						background: #3182ce; 
+						color: white; 
+						padding: 12px 24px; 
+						text-decoration: none; 
+						border-radius: 8px; 
+						margin: 10px 0; 
+						font-weight: 600;
+					}
+				</style>
+			</head>
+			<body>
+				<div class="container">
+					<div class="header">
+						<h1>👋 Account Deleted</h1>
+						<p>QuestZen AI - Goodbye, ${displayName}</p>
+					</div>
+					
+					<div class="content">
+						<div class="alert">
+							<p style="margin: 0; font-weight: 600;">
+								⚠️ Your QuestZen AI account has been successfully deleted.
+							</p>
+						</div>
+						
+						<p>Hello ${displayName},</p>
+						
+						<p>This email confirms that your QuestZen AI account has been permanently deleted.</p>
+						
+						<div class="info">
+							<p style="margin: 0 0 10px 0; font-weight: 600;">📝 What was deleted:</p>
+							<ul style="margin: 0; padding-left: 20px;">
+								<li>Your user profile and account information</li>
+								<li>All your quests and goals</li>
+								<li>Progress data and achievements</li>
+								<li>Focus sessions and analytics</li>
+								<li>Collaborations and invitations</li>
+							</ul>
+						</div>
+						
+						<div class="alert">
+							<p style="margin: 0;">
+								<strong>Recovery Period:</strong> <br>
+								You have <strong>${daysToRecover} days</strong> to contact us if this was a mistake.<br>
+								After this period, your data will be permanently unrecoverable.
+							</p>
+						</div>
+						
+						<p><strong>If this was a mistake:</strong></p>
+						<p>
+							Email us immediately at: <br>
+							<a href="mailto:${supportEmail}" style="color: #3182ce;">${supportEmail}</a>
+						</p>
+						
+						<p><strong>Need to start fresh?</strong></p>
+						<p>
+							You can create a new account anytime at:<br>
+							<a href="${frontendUrl}/signup" style="color: #3182ce;">${frontendUrl}/signup</a>
+						</p>
+						
+						<p>Thank you for being part of QuestZen AI. We wish you the best in your future endeavors!</p>
+						
+						<p style="color: #718096; font-size: 14px; margin-top: 30px;">
+							<em>"Every end is a new beginning."</em>
+						</p>
+					</div>
+					
+					<div class="footer">
+						<p>QuestZen AI · Turn Goals Into Focused Quests</p>
+						<p><a href="${frontendUrl}" style="color: #667eea; text-decoration: none;">Visit our website</a></p>
+						<p style="font-size: 12px; color: #a0aec0; margin-top: 20px;">
+							This is an automated message. Please do not reply.<br>
+							© ${new Date().getFullYear()} QuestZen AI. All rights reserved.
+						</p>
+					</div>
+				</div>
+			</body>
+			</html>
+		`;
+
+		await transporter.sendMail({
+			from:
+				process.env.SMTP_FROM || '"QuestZen AI Support" <support@questzen.app>',
+			to: email,
+			subject: "👋 Your QuestZen AI Account Has Been Deleted",
+			html,
+		});
+
+		console.log(`Account deletion email sent to ${email}`);
+		return true;
+	} catch (error) {
+		console.error(`Failed to send account deletion email to ${email}:`, error);
+		throw error;
+	}
+}
+
+// NEW: Account deletion notification to admin (optional)
+// ... existing code ...
+
+// Update the admin notification to include Paystack info
+export async function sendAdminDeletionNotification(
+	userEmail: string,
+	displayName: string,
+	paystackCustomerCode?: string,
+	reason?: string
+) {
+	try {
+		const adminEmail = process.env.ADMIN_EMAIL;
+		if (!adminEmail) return;
+
+		const html = `
+			<!DOCTYPE html>
+			<html>
+			<head>
+				<meta charset="UTF-8">
+				<style>
+					body { font-family: Arial, sans-serif; }
+					.container { max-width: 600px; margin: 0 auto; }
+					.header { background: #e53e3e; color: white; padding: 20px; text-align: center; }
+					.content { padding: 20px; border: 1px solid #ddd; }
+					.info { background: #f7fafc; padding: 15px; margin: 15px 0; border-left: 4px solid #e53e3e; }
+					.warning { background: #fff3cd; padding: 15px; margin: 15px 0; border-left: 4px solid #ffc107; }
+				</style>
+			</head>
+			<body>
+				<div class="container">
+					<div class="header">
+						<h2>🚨 Account Deletion Alert</h2>
+					</div>
+					<div class="content">
+						<p>A user has deleted their account:</p>
+						<div class="info">
+							<p><strong>User:</strong> ${displayName} (${userEmail})</p>
+							<p><strong>Deleted At:</strong> ${new Date().toLocaleString()}</p>
+							${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ""}
+							${
+								paystackCustomerCode
+									? `<p><strong>Paystack Customer Code:</strong> ${paystackCustomerCode}</p>`
+									: ""
+							}
+						</div>
+						
+						<div class="warning">
+							<p><strong>Action Required:</strong></p>
+							<ol>
+								<li>Check if user had active subscription</li>
+								${
+									paystackCustomerCode
+										? `<li>Verify subscription cancellation in Paystack dashboard</li>`
+										: ""
+								}
+								<li>Review archived data if needed</li>
+							</ol>
+						</div>
+						
+						<p><strong>What was deleted:</strong></p>
+						<ul>
+							<li>User profile and account information</li>
+							<li>All quests and goals</li>
+							<li>Progress data and achievements</li>
+							<li>Focus sessions and analytics</li>
+							<li>Collaborations and invitations</li>
+						</ul>
+						
+						<p>This action was triggered by the user through the settings page.</p>
+					</div>
+				</div>
+			</body>
+			</html>
+		`;
+
+		await transporter.sendMail({
+			from:
+				process.env.SMTP_FROM || '"QuestZen AI System" <system@questzen.app>',
+			to: adminEmail,
+			subject: `🚨 Account Deleted: ${userEmail}`,
+			html,
+		});
+
+		console.log(`Admin notification sent for deleted account: ${userEmail}`);
+	} catch (error) {
+		console.error("Failed to send admin notification:", error);
+	}
+}
