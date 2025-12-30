@@ -76,3 +76,32 @@ export async function GET(request: NextRequest) {
 		);
 	}
 }
+
+// Add this as a temporary test route in your backend
+export async function POST(request: NextRequest) {
+	try {
+		const { userId } = await request.json();
+		const db = await getDatabase();
+
+		console.log("🧪 Test query for userId:", userId);
+
+		// Query as string
+		const notifications = await db
+			.collection("notifications")
+			.find({
+				userId: userId,
+			})
+			.toArray();
+
+		console.log(`🧪 Found ${notifications.length} notifications`);
+
+		return NextResponse.json({
+			userId,
+			count: notifications.length,
+			notifications: notifications,
+		});
+	} catch (error: any) {
+		console.error("Test error:", error);
+		return NextResponse.json({ error: error.message }, { status: 500 });
+	}
+}
