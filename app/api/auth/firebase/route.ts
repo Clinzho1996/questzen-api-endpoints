@@ -136,6 +136,7 @@ export async function POST(request: NextRequest) {
 				achievements: [],
 				completedGoals: 0,
 				focusSessions: 0,
+				subscriptionStatus: "inactive",
 				createdAt: now,
 				updatedAt: now,
 			};
