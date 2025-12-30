@@ -252,6 +252,7 @@ export async function disableSubscription(
 	return paystack.disableSubscription(subscriptionCode, token);
 }
 
+
 export async function getSubscription(
 	subscriptionCode: string
 ): Promise<{ data: PaystackSubscription }> {
