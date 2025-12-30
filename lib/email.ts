@@ -116,15 +116,12 @@ export async function sendPasswordResetEmail(
 						<p>We received a request to reset your password for your QuestZen AI account.</p>
 						
 						<div style="text-align: center; margin: 30px 0;">
-							<a href="${resetUrl}" class="button" style="color: white; text-decoration: none;">
+							<a href="${resetUrl}" class="button" style="color: white; text-decoration: none;background-color: #2D3748">
 								🔑 Reset Your Password
 							</a>
 						</div>
 						
-						<p style="text-align: center; color: #718096;">
-							Or copy and paste this link into your browser:<br>
-							<span class="code-block">${resetUrl}</span>
-						</p>
+					
 						
 						<div class="warning">
 							<p style="margin: 0;">
