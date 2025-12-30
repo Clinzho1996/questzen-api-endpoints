@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 const allowedOrigins = [
 	"https://questzenai.devclinton.org",
+	"https://questzen.app",
 	"http://localhost:5173", // Vite dev server
 	"http://localhost:3000", // Next.js dev server
 ];

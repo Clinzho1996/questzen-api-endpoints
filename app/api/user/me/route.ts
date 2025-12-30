@@ -45,6 +45,7 @@ function getCorsHeaders(origin: string | null): Headers {
 	const headers = new Headers();
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
+		"https://questzen.app",
 		"http://localhost:5173",
 		"http://localhost:3000",
 	];
