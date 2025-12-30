@@ -24,14 +24,34 @@ export interface PaystackPlan {
 
 export interface PaystackSubscription {
 	id: number;
-	customer: number;
-	plan: number;
-	authorization: number;
-	status: "active" | "non-renewing" | "cancelled";
+	domain: string;
+	status: string;
+	amount: number;
+	customer: {
+		id: number;
+		customer_code: string;
+		email: string;
+	};
+	plan: {
+		id: number;
+		name: string;
+		plan_code: string;
+		amount: number;
+		interval: string;
+	} | null;
+	authorization: {
+		authorization_code: string;
+		card_type: string;
+	};
+	invoice_limit: number;
+	subscription_code: string;
 	email_token: string;
-	next_payment_date: string;
+	quantity: number;
 	createdAt: string;
 	updatedAt: string;
+	next_payment_date: string | null;
+	cancelledAt?: string | null;
+	ends_at?: string | null;
 }
 
 export interface PaystackSubscriptionResponse {

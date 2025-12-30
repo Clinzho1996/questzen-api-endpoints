@@ -10,11 +10,23 @@ export interface User {
 	// 🔥 NEW FIELDS FOR FIREBASE
 	firebaseUid?: string; // Firebase user ID
 	provider?: "email" | "google" | "firebase"; // Auth provider
-
 	subscriptionTier: "free" | "premium";
+	subscriptionStatus: "active" | "cancelled" | "expired" | "inactive";
+
 	stripeCustomerId?: string;
 	stripeSubscriptionId?: string;
-
+	subscriptionDetails?: {
+		planCode: string;
+		planName: string;
+		status: "active" | "cancelled" | "expired" | "inactive";
+		nextPaymentDate?: string;
+		amount: number;
+		currency: string;
+		interval: "monthly" | "yearly";
+		startDate: string;
+		cancelledAt?: string;
+		endsAt?: string;
+	};
 	// Stats
 	streak: number;
 	longestStreak: number;
@@ -27,7 +39,12 @@ export interface User {
 	// Additional stats that might be useful
 	completedGoals?: number;
 	focusSessions?: number;
-
+	premiumSince?: Date;
+	subscriptionStartDate?: Date;
+	lastPaymentDate?: Date;
+	nextBillingDate?: Date;
+	subscriptionEndDate?: Date;
+	cancelledAt?: Date;
 	// Timestamps
 	createdAt: Date;
 	updatedAt: Date;

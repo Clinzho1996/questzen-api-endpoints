@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
 			totalFocusMinutes: 0,
 			level: 1,
 			xp: 0,
+			subscriptionStatus: "inactive",
 			achievements: [],
 			createdAt: new Date(),
 			updatedAt: new Date(),
