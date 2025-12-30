@@ -488,7 +488,7 @@ export async function sendCollaborationEmail(
 								? `
               <p>As an existing QuestZen AI user, you can accept this invitation directly:</p>
               <div style="text-align: center;">
-                <a href="${acceptanceUrl}" class="button" style="color: white; text-decoration: none;">
+                <a href="${acceptanceUrl}" class="button" style="color: white; text-decoration: none;background-color: #2D3748">
                   🎯 View Invitation in QuestZen
                 </a>
               </div>
