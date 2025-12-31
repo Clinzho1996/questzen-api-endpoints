@@ -4,41 +4,32 @@ import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(
-	request: NextRequest,
-	{ params }: { params: Promise<{ id: string }> }
-) {
-	try {
-		const { id: habitId } = await params;
+async function resolveCurrentUser(db: any, user: any) {
+	let currentUser = null;
 
-		const user = await requireAuth(request);
-		const db = await getDatabase();
+	// 1. Try MongoDB ObjectId
+	if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
+		currentUser = await db
+			.collection("users")
+			.findOne(
+				{ _id: new ObjectId(user.userId) },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
+	}
 
-		// Get user
-		let currentUser = null;
-		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
-			try {
-				currentUser = await db.collection("users").findOne(
-					{ _id: new ObjectId(user.userId) },
-					{
-						projection: {
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-						},
-					}
-				);
-				console.log("✅ Found user by MongoDB _id");
-			} catch (error) {
-				console.log("⚠️ Invalid ObjectId format for user lookup");
-			}
-		}
-
-		// Priority 2: Look by firebaseUid
-		if (!currentUser && user.userId) {
-			currentUser = await db.collection("users").findOne(
+	// 2. Try firebaseUid
+	if (!currentUser && user.userId) {
+		currentUser = await db
+			.collection("users")
+			.findOne(
 				{ firebaseUid: user.userId },
 				{
 					projection: {
@@ -50,12 +41,13 @@ export async function GET(
 					},
 				}
 			);
-			console.log("✅ Found user by firebaseUid");
-		}
+	}
 
-		// Priority 3: Look by email
-		if (!currentUser && user.email) {
-			currentUser = await db.collection("users").findOne(
+	// 3. Try email
+	if (!currentUser && user.email) {
+		currentUser = await db
+			.collection("users")
+			.findOne(
 				{ email: user.email.toLowerCase().trim() },
 				{
 					projection: {
@@ -67,42 +59,60 @@ export async function GET(
 					},
 				}
 			);
-			console.log("✅ Found user by email");
+	}
+
+	// 4. Create user if not found
+	if (!currentUser) {
+		const newUser = {
+			firebaseUid: user.userId,
+			email: user.email || "",
+			displayName: user.email?.split("@")[0] || "QuestZen User",
+			photoURL: "",
+			subscriptionTier: "free",
+			subscriptionStatus: "inactive",
+			streak: 0,
+			longestStreak: 0,
+			totalFocusMinutes: 0,
+			level: 1,
+			xp: 0,
+			achievements: [],
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		};
+
+		const result = await db.collection("users").insertOne(newUser);
+
+		currentUser = {
+			_id: result.insertedId,
+			firebaseUid: newUser.firebaseUid,
+			email: newUser.email,
+			displayName: newUser.displayName,
+			photoURL: "",
+		};
+	}
+
+	return currentUser;
+}
+
+/* ===================== GET ===================== */
+export async function GET(
+	request: NextRequest,
+	{ params }: { params: { id: string } }
+) {
+	try {
+		const habitId = params.id;
+
+		if (!ObjectId.isValid(habitId)) {
+			return NextResponse.json({ error: "Invalid habit id" }, { status: 400 });
 		}
 
-		// Create new user if not found
-		if (!currentUser) {
-			console.log("🔄 Creating new user...");
-			const newUser = {
-				firebaseUid: user.userId,
-				email: user.email || "",
-				displayName: user.email?.split("@")[0] || "QuestZen User",
-				photoURL: "",
-				subscriptionTier: "free",
-				streak: 0,
-				longestStreak: 0,
-				totalFocusMinutes: 0,
-				level: 1,
-				xp: 0,
-				achievements: [],
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			};
+		const user = await requireAuth(request);
+		const db = await getDatabase();
 
-			const result = await db.collection("users").insertOne(newUser);
-			currentUser = {
-				_id: result.insertedId,
-				firebaseUid: newUser.firebaseUid,
-				email: newUser.email,
-				displayName: newUser.displayName,
-				photoURL: "",
-			};
-			console.log("✅ Created new user");
-		}
+		const currentUser = await resolveCurrentUser(db, user);
 
-		// Get notes for this habit
 		const notes = await db
-			.collection("habit_notes") // You'll need to create this collection
+			.collection("habit_notes")
 			.find({
 				habitId: new ObjectId(habitId),
 				userId: currentUser._id,
@@ -111,7 +121,7 @@ export async function GET(
 			.toArray();
 
 		return NextResponse.json(notes);
-	} catch (error: any) {
+	} catch (error) {
 		console.error("Get habit notes error:", error);
 		return NextResponse.json(
 			{ error: { message: "Failed to fetch habit notes" } },
@@ -120,104 +130,32 @@ export async function GET(
 	}
 }
 
-// POST endpoint for adding notes
+/* ===================== POST ===================== */
 export async function POST(
 	request: NextRequest,
 	{ params }: { params: { id: string } }
 ) {
 	try {
-		const user = await requireAuth(request);
-		const db = await getDatabase();
 		const habitId = params.id;
+
+		if (!ObjectId.isValid(habitId)) {
+			return NextResponse.json({ error: "Invalid habit id" }, { status: 400 });
+		}
+
 		const { content } = await request.json();
 
-		// Get user
-		let currentUser = null;
-		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
-			try {
-				currentUser = await db.collection("users").findOne(
-					{ _id: new ObjectId(user.userId) },
-					{
-						projection: {
-							_id: 1,
-							firebaseUid: 1,
-							email: 1,
-							displayName: 1,
-							photoURL: 1,
-						},
-					}
-				);
-				console.log("✅ Found user by MongoDB _id");
-			} catch (error) {
-				console.log("⚠️ Invalid ObjectId format for user lookup");
-			}
-		}
-
-		// Priority 2: Look by firebaseUid
-		if (!currentUser && user.userId) {
-			currentUser = await db.collection("users").findOne(
-				{ firebaseUid: user.userId },
-				{
-					projection: {
-						_id: 1,
-						firebaseUid: 1,
-						email: 1,
-						displayName: 1,
-						photoURL: 1,
-					},
-				}
+		if (!content || typeof content !== "string") {
+			return NextResponse.json(
+				{ error: "Note content is required" },
+				{ status: 400 }
 			);
-			console.log("✅ Found user by firebaseUid");
 		}
 
-		// Priority 3: Look by email
-		if (!currentUser && user.email) {
-			currentUser = await db.collection("users").findOne(
-				{ email: user.email.toLowerCase().trim() },
-				{
-					projection: {
-						_id: 1,
-						firebaseUid: 1,
-						email: 1,
-						displayName: 1,
-						photoURL: 1,
-					},
-				}
-			);
-			console.log("✅ Found user by email");
-		}
+		const user = await requireAuth(request);
+		const db = await getDatabase();
 
-		// Create new user if not found
-		if (!currentUser) {
-			console.log("🔄 Creating new user...");
-			const newUser = {
-				firebaseUid: user.userId,
-				email: user.email || "",
-				displayName: user.email?.split("@")[0] || "QuestZen User",
-				photoURL: "",
-				subscriptionTier: "free",
-				streak: 0,
-				longestStreak: 0,
-				totalFocusMinutes: 0,
-				level: 1,
-				xp: 0,
-				achievements: [],
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			};
+		const currentUser = await resolveCurrentUser(db, user);
 
-			const result = await db.collection("users").insertOne(newUser);
-			currentUser = {
-				_id: result.insertedId,
-				firebaseUid: newUser.firebaseUid,
-				email: newUser.email,
-				displayName: newUser.displayName,
-				photoURL: "",
-			};
-			console.log("✅ Created new user");
-		}
-
-		// Create note
 		const note = {
 			habitId: new ObjectId(habitId),
 			userId: currentUser._id,
@@ -231,10 +169,12 @@ export async function POST(
 
 		return NextResponse.json({
 			id: result.insertedId,
-			...note,
-			_id: undefined,
+			habitId,
+			content,
+			date: note.date,
+			createdAt: note.createdAt,
 		});
-	} catch (error: any) {
+	} catch (error) {
 		console.error("Add habit note error:", error);
 		return NextResponse.json(
 			{ error: { message: "Failed to add note" } },
