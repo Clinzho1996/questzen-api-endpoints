@@ -15,6 +15,9 @@ const HABITS = [
 		color: "#F59E0B",
 		tags: ["mindfulness", "positive psychology", "mental health"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -49,6 +52,9 @@ const HABITS = [
 		color: "#8B5CF6",
 		tags: ["mindset", "confidence", "self_improvement"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -84,6 +90,9 @@ const HABITS = [
 		color: "#10B981",
 		tags: ["health", "nutrition", "supplements"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -118,6 +127,9 @@ const HABITS = [
 		color: "#3B82F6",
 		tags: ["fitness", "mindfulness", "flexibility"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -137,6 +149,9 @@ const HABITS = [
 		color: "#EF4444",
 		tags: ["writing", "planning", "mindfulness"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -156,6 +171,9 @@ const HABITS = [
 		color: "#EC4899",
 		tags: ["visualization", "goals", "mindset"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -177,6 +195,9 @@ const HABITS = [
 		color: "#0EA5E9",
 		tags: ["health", "hydration", "wellness"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["afternoon"],
@@ -196,6 +217,9 @@ const HABITS = [
 		color: "#10B981",
 		tags: ["fitness", "flexibility", "energy"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["afternoon"],
@@ -217,6 +241,9 @@ const HABITS = [
 		color: "#6366F1",
 		tags: ["reflection", "learning", "mindfulness"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["evening"],
@@ -236,6 +263,9 @@ const HABITS = [
 		color: "#8B5CF6",
 		tags: ["planning", "productivity", "organization"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["evening"],
@@ -255,6 +285,9 @@ const HABITS = [
 		color: "#1E40AF",
 		tags: ["health", "sleep", "recovery"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["evening"],
@@ -276,6 +309,9 @@ const HABITS = [
 		color: "#DC2626",
 		tags: ["fitness", "health", "exercise"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 5,
 			timeOfDay: ["any"],
@@ -295,6 +331,9 @@ const HABITS = [
 		color: "#059669",
 		tags: ["nature", "mental_health", "wellness"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -319,6 +358,9 @@ const HABITS = [
 		color: "#7C3AED",
 		tags: ["social", "relationships", "mental_health"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -338,6 +380,9 @@ const HABITS = [
 		color: "#06B6D4",
 		tags: ["mindfulness", "relaxation", "stress_management"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -357,6 +402,9 @@ const HABITS = [
 		color: "#6366F1",
 		tags: ["mindfulness", "meditation", "mental_health"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -376,6 +424,9 @@ const HABITS = [
 		color: "#6B7280",
 		tags: ["health", "sobriety", "wellness"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 1,
 			timeOfDay: ["any"],
@@ -395,6 +446,9 @@ const HABITS = [
 		color: "#3B82F6",
 		tags: ["social", "relationships", "connection"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 3,
 			timeOfDay: ["any"],
@@ -414,6 +468,9 @@ const HABITS = [
 		color: "#0EA5E9",
 		tags: ["health", "hygiene", "prevention"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning", "afternoon", "evening"],
@@ -433,6 +490,9 @@ const HABITS = [
 		color: "#8B5CF6",
 		tags: ["learning", "education", "leisure"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["evening"],
@@ -452,6 +512,9 @@ const HABITS = [
 		color: "#EF4444",
 		tags: ["health", "prevention", "monitoring"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 1,
 			timeOfDay: ["any"],
@@ -471,6 +534,9 @@ const HABITS = [
 		color: "#DC2626",
 		tags: ["fitness", "strength", "health"],
 		difficulty: "hard",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 3,
 			timeOfDay: ["any"],
@@ -490,6 +556,9 @@ const HABITS = [
 		color: "#10B981",
 		tags: ["learning", "growth", "skills"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -509,6 +578,9 @@ const HABITS = [
 		color: "#F59E0B",
 		tags: ["learning", "languages", "brain_training"],
 		difficulty: "hard",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -528,6 +600,9 @@ const HABITS = [
 		color: "#3B82F6",
 		tags: ["kindness", "community", "purpose"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -547,6 +622,9 @@ const HABITS = [
 		color: "#EC4899",
 		tags: ["relationships", "intimacy", "health"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 3,
 			timeOfDay: ["evening"],
@@ -566,6 +644,9 @@ const HABITS = [
 		color: "#8B5CF6",
 		tags: ["spirituality", "mindfulness", "religion"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning", "evening"],
@@ -585,6 +666,9 @@ const HABITS = [
 		color: "#0EA5E9",
 		tags: ["fitness", "swimming", "low_impact"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 2,
 			timeOfDay: ["any"],
@@ -604,6 +688,9 @@ const HABITS = [
 		color: "#6366F1",
 		tags: ["career", "professional", "connections"],
 		difficulty: "medium",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 1,
 			timeOfDay: ["any"],
@@ -623,6 +710,9 @@ const HABITS = [
 		color: "#10B981",
 		tags: ["fitness", "flexibility", "mobility"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning", "evening"],
@@ -642,6 +732,9 @@ const HABITS = [
 		color: "#6B7280",
 		tags: ["organization", "cleanliness", "mental_health"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 1,
 			timeOfDay: ["any"],
@@ -661,6 +754,9 @@ const HABITS = [
 		color: "#F59E0B",
 		tags: ["mindfulness", "mood", "positivity"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -680,6 +776,9 @@ const HABITS = [
 		color: "#1E40AF",
 		tags: ["digital", "mental_health", "focus"],
 		difficulty: "hard",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["evening"],
@@ -699,6 +798,9 @@ const HABITS = [
 		color: "#0EA5E9",
 		tags: ["health", "cold_exposure", "energy"],
 		difficulty: "hard",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["morning"],
@@ -723,6 +825,9 @@ const HABITS = [
 		color: "#059669",
 		tags: ["nutrition", "fasting", "health"],
 		difficulty: "hard",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 7,
 			timeOfDay: ["any"],
@@ -742,6 +847,9 @@ const HABITS = [
 		color: "#10B981",
 		tags: ["fitness", "productivity", "work"],
 		difficulty: "easy",
+		isCollaborative: true,
+		collaborators: [],
+		participants: [],
 		defaultSettings: {
 			timesPerWeek: 2,
 			timeOfDay: ["afternoon"],
@@ -773,6 +881,10 @@ export async function seedHabits() {
 				totalMinutesSpent: 0,
 				completionHistory: [],
 			},
+			// ADD DEFAULT COLLABORATIVE PROPERTIES FOR ALL HABITS
+			isCollaborative: habit.isCollaborative || false,
+			collaborators: habit.collaborators || [],
+			participants: habit.participants || [],
 			createdAt: new Date(),
 			updatedAt: new Date(),
 		})
@@ -781,6 +893,12 @@ export async function seedHabits() {
 	await Promise.all(insertPromises);
 
 	console.log(`✅ Seeded ${HABITS.length} predefined habits`);
+
+	// Count collaborative habits
+	const collaborativeCount = HABITS.filter(
+		(h) => h.isCollaborative === true
+	).length;
+	console.log(`🤝 Collaborative habits: ${collaborativeCount}`);
 
 	// Print summary
 	const categories: any = {};
@@ -802,6 +920,12 @@ export async function seedHabits() {
 	Object.entries(difficulties).forEach(([difficulty, count]) => {
 		console.log(`   ${difficulty}: ${count} habits`);
 	});
+
+	console.log("\n🤝 Collaborative vs Non-collaborative:");
+	console.log(`   Collaborative: ${collaborativeCount} habits`);
+	console.log(
+		`   Non-collaborative: ${HABITS.length - collaborativeCount} habits`
+	);
 }
 
 // Run if called directly
@@ -843,6 +967,10 @@ export async function POST(request: NextRequest) {
 					totalMinutesSpent: 0,
 					completionHistory: [],
 				},
+				// ADD DEFAULT COLLABORATIVE PROPERTIES
+				isCollaborative: habit.isCollaborative || false,
+				collaborators: habit.collaborators || [],
+				participants: habit.participants || [],
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			})
@@ -852,34 +980,19 @@ export async function POST(request: NextRequest) {
 
 		console.log(`✅ Seeded ${HABITS.length} predefined habits`);
 
-		// Print summary
-		const categories: any = {};
-		HABITS.forEach((habit) => {
-			categories[habit.category] = (categories[habit.category] || 0) + 1;
-		});
-
-		console.log("\n📊 Habit Categories Summary:");
-		Object.entries(categories).forEach(([category, count]) => {
-			console.log(`   ${category}: ${count} habits`);
-		});
-
-		console.log("\n🎯 Difficulty Distribution:");
-		const difficulties = HABITS.reduce((acc: any, habit) => {
-			acc[habit.difficulty] = (acc[habit.difficulty] || 0) + 1;
-			return acc;
-		}, {});
-
-		Object.entries(difficulties).forEach(([difficulty, count]) => {
-			console.log(`   ${difficulty}: ${count} habits`);
-		});
+		// Count collaborative habits
+		const collaborativeCount = HABITS.filter(
+			(h) => h.isCollaborative === true
+		).length;
+		console.log(`🤝 Collaborative habits seeded: ${collaborativeCount}`);
 
 		return NextResponse.json({
 			success: true,
-			message: `Seeded ${HABITS.length} habits`,
+			message: `Seeded ${HABITS.length} habits (${collaborativeCount} collaborative)`,
 			stats: {
 				total: HABITS.length,
-				categories,
-				difficulties,
+				collaborative: collaborativeCount,
+				nonCollaborative: HABITS.length - collaborativeCount,
 			},
 		});
 	} catch (error: any) {

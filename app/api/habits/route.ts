@@ -155,7 +155,7 @@ export async function GET(request: NextRequest) {
 				isPredefined: false,
 				isFromPredefined: habit.isFromPredefined || false,
 				// ADD THESE WITH PROPER DEFAULTS:
-				isCollaborative: habit.isCollaborative === true, // Explicit boolean check
+				isCollaborative: habit.isCollaborative === false, // Explicit boolean check
 				role: habit.role || "owner",
 				collaborators: habit.collaborators || [],
 				participants: habit.participants || [],
