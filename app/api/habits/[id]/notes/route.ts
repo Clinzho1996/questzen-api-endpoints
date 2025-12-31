@@ -6,12 +6,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	{ params }: { params: Promise<{ id: string }> }
 ) {
 	try {
+		const { id: habitId } = await params;
+
 		const user = await requireAuth(request);
 		const db = await getDatabase();
-		const habitId = params.id;
 
 		// Get user
 		let currentUser = null;
