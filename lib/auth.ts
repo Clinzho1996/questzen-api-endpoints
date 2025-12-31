@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 import { getDatabase } from "./mongodb";
 
 export interface AuthUser {
+	_id?: string;
 	userId: string; // Can be firebaseUid OR MongoDB _id
 	email: string;
 	photoURL?: string;

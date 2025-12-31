@@ -3,7 +3,7 @@ import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-// GET all goals for the authenticated user
+// GET all goals AND habits for the authenticated user
 export async function GET(request: NextRequest) {
 	try {
 		const user = await requireAuth(request);
@@ -119,7 +119,108 @@ export async function GET(request: NextRequest) {
 			displayName: userDisplayName,
 		});
 
-		// Build comprehensive query
+		// =========== GET USER'S HABITS ===========
+		console.log("🔄 Fetching user habits...");
+		const userHabits = await db
+			.collection("habits")
+			.find({
+				userId: userMongoId,
+				isPredefined: false,
+			})
+			.sort({ createdAt: -1 })
+			.toArray();
+
+		const transformedHabits = userHabits.map((habit) => ({
+			id: habit._id.toString(),
+			name: habit.name,
+			description: habit.description || "",
+			category: habit.category || "custom",
+			icon: habit.icon || "✅",
+			color: habit.color || "#3B82F6",
+			settings: habit.settings || {
+				timesPerWeek: 7,
+				timeOfDay: ["any"],
+				reminders: [],
+				duration: 5,
+			},
+			stats: habit.stats || {
+				totalCompletions: 0,
+				bestStreak: 0,
+				currentStreak: 0,
+				successRate: 0,
+				averageCompletionTime: 0,
+				totalMinutesSpent: 0,
+			},
+			completedToday: false, // This will be calculated from habit_completions
+			progress: 0, // Calculated progress based on completions
+			isActive: true,
+			createdAt: habit.createdAt?.toISOString?.() || new Date().toISOString(),
+			updatedAt: habit.updatedAt?.toISOString?.() || new Date().toISOString(),
+			tags: habit.tags || [],
+			isPredefined: false,
+			isFromPredefined: habit.isFromPredefined || false,
+		}));
+
+		console.log(`✅ Found ${userHabits.length} habits for user`);
+
+		// Get predefined habits
+		const predefinedHabits = await db
+			.collection("habits")
+			.find({
+				isPredefined: true,
+			})
+			.toArray();
+
+		const transformedPredefinedHabits = predefinedHabits.map((habit) => ({
+			id: habit._id.toString(),
+			name: habit.name,
+			description: habit.description || "",
+			category: habit.category || "general",
+			icon: habit.icon || "🌟",
+			color: habit.color || "#6B7280",
+			difficulty: habit.difficulty || "medium",
+			timeCommitment: habit.timeCommitment || 5,
+			benefits: habit.benefits || [],
+			tags: habit.tags || [],
+			defaultSettings: habit.defaultSettings || {},
+			isPredefined: true,
+		}));
+
+		console.log(`✅ Found ${predefinedHabits.length} predefined habits`);
+
+		// Get today's completions for habits
+		const today = new Date().toISOString().split("T")[0];
+		const habitIds = userHabits.map((h) => h._id);
+
+		let todayCompletions: any = [];
+		if (habitIds.length > 0) {
+			todayCompletions = await db
+				.collection("habit_completions")
+				.find({
+					habitId: { $in: habitIds },
+					date: today,
+					userId: userMongoId,
+				})
+				.toArray();
+		}
+
+		// Mark habits as completed today
+		const completedHabitIds = new Set(
+			todayCompletions
+				.filter((c: any) => c.completed)
+				.map((c: any) => c.habitId.toString())
+		);
+
+		const habitsWithCompletion = transformedHabits.map((habit) => ({
+			...habit,
+			completedToday: completedHabitIds.has(habit.id),
+			progress: completedHabitIds.has(habit.id) ? 100 : 0,
+		}));
+
+		// =========== GET USER'S GOALS ===========
+		console.log("🔄 Fetching user goals...");
+
+		// Build comprehensive query for goals
 		const queryConditions: any[] = [];
 
 		// 1. User is owner (all possible ID formats)
@@ -151,7 +252,10 @@ export async function GET(request: NextRequest) {
 			},
 		});
 
-		console.log("🔍 Executing query with conditions:", queryConditions.length);
+		console.log(
+			"🔍 Executing goals query with conditions:",
+			queryConditions.length
+		);
 
 		// Execute query
 		const goals = await db
@@ -341,11 +445,29 @@ export async function GET(request: NextRequest) {
 			};
 		});
 
-		console.log("📤 Returning", transformedGoals.length, "goals");
+		console.log("📤 Returning combined data:", {
+			goals: transformedGoals.length,
+			habits: habitsWithCompletion.length,
+			availableHabits: transformedPredefinedHabits.length,
+		});
 
-		return NextResponse.json(transformedGoals);
+		// Return combined response
+		return NextResponse.json({
+			goals: transformedGoals,
+			habits: habitsWithCompletion,
+			availableHabits: transformedPredefinedHabits,
+			stats: {
+				totalGoals: transformedGoals.length,
+				completedGoals: transformedGoals.filter((g) => g.completed).length,
+				totalHabits: habitsWithCompletion.length,
+				activeHabits: habitsWithCompletion.filter((h) => h.completedToday)
+					.length,
+				todayCompletions: todayCompletions.filter((c: any) => c.completed)
+					.length,
+			},
+		});
 	} catch (error: any) {
-		console.error("❌ Get goals error:", error);
+		console.error("❌ Get goals and habits error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
@@ -357,7 +479,7 @@ export async function GET(request: NextRequest) {
 		return NextResponse.json(
 			{
 				error: {
-					message: "Failed to fetch goals",
+					message: "Failed to fetch data",
 					details: error.message,
 				},
 			},
@@ -372,6 +494,7 @@ export async function POST(request: NextRequest) {
 		const user = await requireAuth(request);
 		const body = await request.json();
 		const {
+			type = "goal", // "goal" or "habit"
 			title,
 			description,
 			category,
@@ -382,26 +505,21 @@ export async function POST(request: NextRequest) {
 			userId,
 			isCollaborative,
 			collaborators = [],
+			// Habit specific fields
+			settings,
+			isPredefined,
+			predefinedHabitId,
+			info,
 		} = body;
 
-		console.log("🎯 Creating goal with data:", {
+		console.log("🎯 Creating item with data:", {
+			type,
 			title,
 			category,
 			priority,
-			dueDate,
-			dueTime,
-			deadline,
-			isCollaborative,
-			collaboratorsCount: collaborators.length,
+			isPredefined,
+			predefinedHabitId,
 		});
-
-		// Validation
-		if (!title || !category) {
-			return NextResponse.json(
-				{ error: { message: "Title and category are required" } },
-				{ status: 400 }
-			);
-		}
 
 		const db = await getDatabase();
 
@@ -461,7 +579,7 @@ export async function POST(request: NextRequest) {
 		}
 
 		if (!currentUser) {
-			console.log("🔄 Creating new user for goal creation...");
+			console.log("🔄 Creating new user for item creation...");
 			const newUser = {
 				firebaseUid: user.userId,
 				email: user.email || "",
@@ -483,6 +601,162 @@ export async function POST(request: NextRequest) {
 				...newUser,
 				_id: result.insertedId,
 			};
+		}
+
+		// Handle habit creation
+		if (type === "habit") {
+			console.log("🔄 Creating new habit...");
+
+			if (!title) {
+				return NextResponse.json(
+					{ error: { message: "Habit name is required" } },
+					{ status: 400 }
+				);
+			}
+
+			let habitData;
+
+			if (isPredefined && predefinedHabitId) {
+				// Get predefined habit
+				const predefinedHabit = await db.collection("habits").findOne({
+					_id: new ObjectId(predefinedHabitId),
+					isPredefined: true,
+				});
+
+				if (!predefinedHabit) {
+					return NextResponse.json(
+						{ error: { message: "Predefined habit not found" } },
+						{ status: 404 }
+					);
+				}
+
+				habitData = {
+					...predefinedHabit,
+					_id: undefined,
+					userId: currentUser._id,
+					userFirebaseUid: currentUser.firebaseUid,
+					isPredefined: false,
+					isFromPredefined: true,
+					originalHabitId: predefinedHabitId,
+					settings: {
+						...predefinedHabit.defaultSettings,
+						...settings,
+						timeOfDay: settings?.timeOfDay ||
+							predefinedHabit.defaultSettings?.timeOfDay || ["any"],
+						timesPerWeek:
+							settings?.timesPerWeek ||
+							predefinedHabit.defaultSettings?.timesPerWeek ||
+							7,
+						timesPerDay:
+							settings?.timesPerDay ||
+							predefinedHabit.defaultSettings?.timesPerDay ||
+							1,
+						reminders:
+							settings?.reminders ||
+							predefinedHabit.defaultSettings?.reminders ||
+							[],
+						duration:
+							settings?.duration ||
+							predefinedHabit.defaultSettings?.duration ||
+							5,
+					},
+					stats: {
+						totalCompletions: 0,
+						bestStreak: 0,
+						currentStreak: 0,
+						successRate: 0,
+						averageCompletionTime: 0,
+						totalMinutesSpent: 0,
+						completionHistory: [],
+					},
+					createdAt: new Date(),
+					updatedAt: new Date(),
+				};
+			} else {
+				// Custom habit
+				habitData = {
+					userId: currentUser._id,
+					userFirebaseUid: currentUser.firebaseUid,
+					name: title,
+					description: description || "",
+					category: category || "custom",
+					isPredefined: false,
+					isFromPredefined: false,
+					settings: settings || {
+						timeOfDay: ["any"],
+						timesPerWeek: 7,
+						timesPerDay: 1,
+						reminders: [],
+						duration: 5,
+					},
+					info: info || {},
+					stats: {
+						totalCompletions: 0,
+						bestStreak: 0,
+						currentStreak: 0,
+						successRate: 0,
+						averageCompletionTime: 0,
+						totalMinutesSpent: 0,
+						completionHistory: [],
+					},
+					tags: [],
+					color: "#3B82F6",
+					icon: "✅",
+					createdAt: new Date(),
+					updatedAt: new Date(),
+				};
+			}
+
+			const result = await db.collection("habits").insertOne(habitData);
+			const habitId = result.insertedId;
+
+			// Create initial completion records for the week
+			const startOfWeek = new Date();
+			startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+			startOfWeek.setHours(0, 0, 0, 0);
+
+			const weeklyCompletions = [];
+			for (let i = 0; i < 7; i++) {
+				const date = new Date(startOfWeek);
+				date.setDate(date.getDate() + i);
+
+				weeklyCompletions.push({
+					habitId,
+					userId: currentUser._id,
+					date: date.toISOString().split("T")[0],
+					completed: false,
+					count: 0,
+					notes: "",
+					mood: null,
+					productivity: null,
+					timeSpent: 0,
+					createdAt: new Date(),
+					updatedAt: new Date(),
+				});
+			}
+
+			await db.collection("habit_completions").insertMany(weeklyCompletions);
+
+			const newHabit = await db.collection("habits").findOne({ _id: habitId });
+
+			return NextResponse.json(
+				{
+					...newHabit,
+					id: newHabit!._id.toString(),
+					_id: undefined,
+				},
+				{ status: 201 }
+			);
+		}
+
+		// Handle goal creation (original logic)
+		console.log("🎯 Creating new goal...");
+
+		if (!title || !category) {
+			return NextResponse.json(
+				{ error: { message: "Title and category are required" } },
+				{ status: 400 }
+			);
 		}
 
 		// Calculate deadline
@@ -527,7 +801,7 @@ export async function POST(request: NextRequest) {
 			}
 		});
 
-		// In POST /api/goals - Add this check at the beginning
+		// Check for existing goals with same email
 		const existingGoalsWithEmail = await db.collection("goals").findOne({
 			"ownerDetails.email": user.email,
 			userId: { $ne: currentUser._id }, // Different from current user ID
@@ -641,7 +915,7 @@ export async function POST(request: NextRequest) {
 
 		return NextResponse.json(createdGoal, { status: 201 });
 	} catch (error: any) {
-		console.error("❌ Create goal error:", error);
+		console.error("❌ Create item error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
@@ -653,7 +927,7 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json(
 			{
 				error: {
-					message: "Failed to create goal",
+					message: "Failed to create item",
 					details: error.message,
 				},
 			},
