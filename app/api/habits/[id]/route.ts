@@ -341,7 +341,7 @@ export async function GET(
 				completedToday,
 				stats: statsData,
 				// ADD DEFAULT COLLABORATIVE PROPERTIES:
-				isCollaborative: habit.isCollaborative || false,
+				isCollaborative: habit.isCollaborative,
 				role: habit.role || "owner",
 				collaborators: habit.collaborators || [],
 				participants: habit.participants || [],
