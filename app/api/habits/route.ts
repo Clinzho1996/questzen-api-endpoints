@@ -1,4 +1,4 @@
-// app/api/habits/route.ts
+// app/api/habits/route.ts - UPDATED WITH COLLABORATIVE PROPERTIES
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -16,33 +16,51 @@ export async function GET(request: NextRequest) {
 		// Lookup user logic
 		if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
 			try {
-				currentUser = await db
-					.collection("users")
-					.findOne(
-						{ _id: new ObjectId(user.userId) },
-						{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
-					);
+				currentUser = await db.collection("users").findOne(
+					{ _id: new ObjectId(user.userId) },
+					{
+						projection: {
+							_id: 1,
+							firebaseUid: 1,
+							email: 1,
+							displayName: 1,
+							photoURL: 1,
+						},
+					}
+				);
 			} catch (error) {
 				console.log("Invalid ObjectId format");
 			}
 		}
 
 		if (!currentUser && user.userId) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ firebaseUid: user.userId },
-					{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
-				);
+			currentUser = await db.collection("users").findOne(
+				{ firebaseUid: user.userId },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
 		}
 
 		if (!currentUser && user.email) {
-			currentUser = await db
-				.collection("users")
-				.findOne(
-					{ email: user.email.toLowerCase().trim() },
-					{ projection: { _id: 1, firebaseUid: 1, email: 1 } }
-				);
+			currentUser = await db.collection("users").findOne(
+				{ email: user.email.toLowerCase().trim() },
+				{
+					projection: {
+						_id: 1,
+						firebaseUid: 1,
+						email: 1,
+						displayName: 1,
+						photoURL: 1,
+					},
+				}
+			);
 		}
 
 		if (!currentUser) {
@@ -76,18 +94,101 @@ export async function GET(request: NextRequest) {
 			(habit) => !userHabitNames.includes(habit.name)
 		);
 
+		// Get today's date for completion check
+		const today = new Date().toISOString().split("T")[0];
+
+		// Get completions for all user habits
+		const habitIds = userHabits.map((h) => h._id);
+		let todayCompletions: any[] = [];
+
+		if (habitIds.length > 0) {
+			todayCompletions = await db
+				.collection("habit_completions")
+				.find({
+					habitId: { $in: habitIds },
+					date: today,
+					userId: currentUser._id,
+				})
+				.toArray();
+		}
+
+		// Create a set of completed habit IDs for today
+		const completedHabitIds = new Set(
+			todayCompletions
+				.filter((c) => c.completed)
+				.map((c) => c.habitId.toString())
+		);
+
+		// Transform user habits with collaborative properties
+		const transformedUserHabits = userHabits.map((habit) => {
+			const isCompletedToday = completedHabitIds.has(habit._id.toString());
+
+			return {
+				id: habit._id.toString(),
+				name: habit.name,
+				description: habit.description || "",
+				category: habit.category || "custom",
+				icon: habit.icon || "✅",
+				color: habit.color || "#3B82F6",
+				settings: habit.settings || {
+					timesPerWeek: 7,
+					timeOfDay: ["any"],
+					reminders: [],
+					duration: 5,
+				},
+				stats: habit.stats || {
+					totalCompletions: 0,
+					bestStreak: 0,
+					currentStreak: 0,
+					successRate: 0,
+					averageCompletionTime: 0,
+					totalMinutesSpent: 0,
+				},
+				completedToday: isCompletedToday,
+				progress: isCompletedToday ? 100 : 0,
+				isActive: true,
+				createdAt: habit.createdAt?.toISOString?.() || new Date().toISOString(),
+				updatedAt: habit.updatedAt?.toISOString?.() || new Date().toISOString(),
+				tags: habit.tags || [],
+				isPredefined: false,
+				isFromPredefined: habit.isFromPredefined || false,
+				// ADD COLLABORATIVE PROPERTIES WITH DEFAULTS:
+				isCollaborative: habit.isCollaborative || false,
+				role: habit.role || "owner",
+				collaborators: habit.collaborators || [],
+				participants: habit.participants || [],
+			};
+		});
+
+		// Transform available habits (predefined)
+		const transformedAvailableHabits = availableHabits.map((habit) => ({
+			id: habit._id.toString(),
+			name: habit.name,
+			description: habit.description || "",
+			category: habit.category || "general",
+			icon: habit.icon || "🌟",
+			color: habit.color || "#6B7280",
+			difficulty: habit.difficulty || "medium",
+			timeCommitment: habit.timeCommitment || 5,
+			benefits: habit.benefits || [],
+			tags: habit.tags || [],
+			defaultSettings: habit.defaultSettings || {
+				timesPerWeek: 7,
+				timeOfDay: ["any"],
+				reminders: [],
+				duration: 5,
+			},
+			isPredefined: true,
+		}));
+
 		const response = {
-			userHabits: userHabits.map((habit) => ({
-				...habit,
-				id: habit._id.toString(),
-				_id: undefined,
-			})),
-			availableHabits: availableHabits.map((habit) => ({
-				...habit,
-				id: habit._id.toString(),
-				_id: undefined,
-			})),
+			userHabits: transformedUserHabits,
+			availableHabits: transformedAvailableHabits,
 		};
+
+		console.log(
+			`✅ Returned ${transformedUserHabits.length} user habits with collaborative properties`
+		);
 
 		return NextResponse.json(response);
 	} catch (error: any) {
@@ -99,7 +200,7 @@ export async function GET(request: NextRequest) {
 	}
 }
 
-// POST - Add a new habit (either custom or from predefined)
+// POST - Add a new habit (either custom or from predefined) - UPDATED WITH COLLABORATIVE PROPERTIES
 export async function POST(request: NextRequest) {
 	try {
 		const user = await requireAuth(request);
@@ -117,6 +218,11 @@ export async function POST(request: NextRequest) {
 			predefinedHabitId,
 			settings = {},
 			info = {},
+			// ADD THESE OPTIONAL COLLABORATIVE PROPERTIES:
+			isCollaborative = false,
+			role = "owner",
+			collaborators = [],
+			participants = [],
 		} = body;
 
 		const db = await getDatabase();
@@ -262,6 +368,11 @@ export async function POST(request: NextRequest) {
 					totalMinutesSpent: 0,
 					completionHistory: [],
 				},
+				// ADD COLLABORATIVE PROPERTIES:
+				isCollaborative: isCollaborative,
+				role: role,
+				collaborators: collaborators,
+				participants: participants,
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			};
@@ -295,6 +406,11 @@ export async function POST(request: NextRequest) {
 				tags: [],
 				color: "#3B82F6",
 				icon: "✅",
+				// ADD COLLABORATIVE PROPERTIES:
+				isCollaborative: isCollaborative,
+				role: role,
+				collaborators: collaborators,
+				participants: participants,
 				createdAt: new Date(),
 				updatedAt: new Date(),
 			};
@@ -302,7 +418,9 @@ export async function POST(request: NextRequest) {
 
 		console.log("📝 Creating habit with data:", {
 			userId: habitData.userId,
-			userFirebaseUid: habitData.userFirebaseUid,
+			isCollaborative: habitData.isCollaborative,
+			role: habitData.role,
+			collaborators: habitData.collaborators?.length || 0,
 		});
 
 		const result = await db.collection("habits").insertOne(habitData);

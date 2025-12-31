@@ -57,6 +57,12 @@ interface Habit {
 	originalHabitId?: string;
 	createdAt: Date;
 	updatedAt: Date;
+
+	// ADD THESE COLLABORATIVE PROPERTIES:
+	isCollaborative?: boolean;
+	role?: "owner" | "collaborator";
+	collaborators?: any[];
+	participants?: any[];
 }
 
 // Helper function for user lookup (DRY)
@@ -327,7 +333,20 @@ export async function GET(
 				};
 		}
 
-		return NextResponse.json(response);
+		return NextResponse.json({
+			habit: {
+				...habit,
+				id: habit._id.toString(),
+				_id: undefined,
+				completedToday,
+				stats: statsData,
+				// ADD DEFAULT COLLABORATIVE PROPERTIES:
+				isCollaborative: habit.isCollaborative || false,
+				role: habit.role || "owner",
+				collaborators: habit.collaborators || [],
+				participants: habit.participants || [],
+			},
+		});
 	} catch (error: any) {
 		console.error("Get habit details error:", error);
 		return NextResponse.json(
