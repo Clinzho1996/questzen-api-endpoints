@@ -29,7 +29,7 @@ export async function GET(
 						},
 					}
 				);
-				console.log("✅ Found user by MongoDB _id");
+				console.log("✅ Found user by MongoDB _id user");
 			} catch (error) {
 				console.log("⚠️ Invalid ObjectId format for user lookup");
 			}
