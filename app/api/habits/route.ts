@@ -131,6 +131,7 @@ export async function GET(request: NextRequest) {
 				dbRole: habit.role,
 			});
 
+			const userRole = "owner";
 			return {
 				id: habit._id.toString(),
 				name: habit.name,
@@ -162,7 +163,7 @@ export async function GET(request: NextRequest) {
 				isFromPredefined: habit.isFromPredefined || false,
 				// FIX THESE LINES - Use the ACTUAL values from database
 				isCollaborative: habit.isCollaborative, // NOT habit.isCollaborative === true
-				role: habit.role || "owner",
+				role: userRole,
 				collaborators: habit.collaborators || [],
 				participants: habit.participants || [],
 			};
