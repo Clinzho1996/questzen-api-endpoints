@@ -119,7 +119,9 @@ export async function GET(request: NextRequest) {
 				.map((c) => c.habitId.toString())
 		);
 
-		// Transform user habits with collaborative properties
+		// In your app/api/habits/route.ts - Update the transformedUserHabits section:
+
+		// Transform user habits with collaborative properties - FIXED WITH DEFAULTS
 		const transformedUserHabits = userHabits.map((habit) => {
 			const isCompletedToday = completedHabitIds.has(habit._id.toString());
 
@@ -152,8 +154,8 @@ export async function GET(request: NextRequest) {
 				tags: habit.tags || [],
 				isPredefined: false,
 				isFromPredefined: habit.isFromPredefined || false,
-				// ADD COLLABORATIVE PROPERTIES WITH DEFAULTS:
-				isCollaborative: habit.isCollaborative || false,
+				// ADD THESE WITH PROPER DEFAULTS:
+				isCollaborative: habit.isCollaborative === true, // Explicit boolean check
 				role: habit.role || "owner",
 				collaborators: habit.collaborators || [],
 				participants: habit.participants || [],
