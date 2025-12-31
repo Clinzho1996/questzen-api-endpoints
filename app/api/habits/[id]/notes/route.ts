@@ -7,8 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 async function resolveCurrentUser(db: any, user: any) {
 	let currentUser = null;
 
-	// 1. Try MongoDB ObjectId
-	if (user.userId && /^[0-9a-fA-F]{24}$/.test(user.userId)) {
+	if (user.userId && ObjectId.isValid(user.userId)) {
 		currentUser = await db
 			.collection("users")
 			.findOne(
@@ -25,7 +24,6 @@ async function resolveCurrentUser(db: any, user: any) {
 			);
 	}
 
-	// 2. Try firebaseUid
 	if (!currentUser && user.userId) {
 		currentUser = await db
 			.collection("users")
@@ -43,7 +41,6 @@ async function resolveCurrentUser(db: any, user: any) {
 			);
 	}
 
-	// 3. Try email
 	if (!currentUser && user.email) {
 		currentUser = await db
 			.collection("users")
@@ -61,7 +58,6 @@ async function resolveCurrentUser(db: any, user: any) {
 			);
 	}
 
-	// 4. Create user if not found
 	if (!currentUser) {
 		const newUser = {
 			firebaseUid: user.userId,
@@ -97,10 +93,10 @@ async function resolveCurrentUser(db: any, user: any) {
 /* ===================== GET ===================== */
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	context: { params: Promise<{ id: string }> }
 ) {
 	try {
-		const habitId = params.id;
+		const { id: habitId } = await context.params;
 
 		if (!ObjectId.isValid(habitId)) {
 			return NextResponse.json({ error: "Invalid habit id" }, { status: 400 });
@@ -108,7 +104,6 @@ export async function GET(
 
 		const user = await requireAuth(request);
 		const db = await getDatabase();
-
 		const currentUser = await resolveCurrentUser(db, user);
 
 		const notes = await db
@@ -133,10 +128,10 @@ export async function GET(
 /* ===================== POST ===================== */
 export async function POST(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	context: { params: Promise<{ id: string }> }
 ) {
 	try {
-		const habitId = params.id;
+		const { id: habitId } = await context.params;
 
 		if (!ObjectId.isValid(habitId)) {
 			return NextResponse.json({ error: "Invalid habit id" }, { status: 400 });
@@ -153,7 +148,6 @@ export async function POST(
 
 		const user = await requireAuth(request);
 		const db = await getDatabase();
-
 		const currentUser = await resolveCurrentUser(db, user);
 
 		const note = {
