@@ -163,6 +163,7 @@ export async function GET(
 		const origin = request.headers.get("origin") || "";
 		const allowedOrigins = [
 			"https://questzenai.devclinton.org",
+			"https://questzen.app",
 			"http://localhost:5173",
 			"http://localhost:3000",
 		];
@@ -193,6 +194,7 @@ export async function OPTIONS(request: NextRequest) {
 	const origin = request.headers.get("origin") || "";
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
+		"https://questzen.app",
 		"http://localhost:5173",
 		"http://localhost:3000",
 	];

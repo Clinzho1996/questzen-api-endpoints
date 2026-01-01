@@ -310,7 +310,7 @@ export async function sendCollaborationEmail(
 
 		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
 		const acceptanceUrl = `${frontendUrl}/accept-invitation/${invitationId}`;
-		const signupUrl = `${frontendUrl}/signup?invitation=${invitationId}`;
+		const signupUrl = `${frontendUrl}/signup?accept-invitation=${invitationId}`;
 
 		const subject = isExistingUser
 			? `🎯 ${inviterName} invited you to collaborate on "${habitTitle}"`

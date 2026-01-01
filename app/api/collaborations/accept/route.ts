@@ -1,3 +1,4 @@
+// app/api/collaborations/accept/route.ts
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -18,10 +19,11 @@ export async function POST(request: NextRequest) {
 			email: user.email,
 			provider: user.provider,
 		});
-		const body = await request.json();
-		const { invitationId } = body;
 
-		console.log("🎯 Accepting invitation:", invitationId);
+		const body = await request.json();
+		const { invitationId, type = "quest" } = body; // Add type parameter
+
+		console.log("🎯 Accepting invitation:", invitationId, "Type:", type);
 		console.log("🔐 Auth user from requireAuth:", {
 			userId: user.userId,
 			email: user.email,
@@ -143,24 +145,51 @@ export async function POST(request: NextRequest) {
 		});
 
 		// ============================================
-		// 2. FIND INVITATION
+		// 2. FIND INVITATION BASED ON TYPE
 		// ============================================
-		console.log("🔍 Looking for invitation...");
+		console.log("🔍 Looking for invitation... Type:", type);
 
-		let invitation = await db.collection("collaboration_invitations").findOne({
-			_id: invitationId,
-			status: "pending",
-		});
+		let invitation = null;
+		let invitationCollection = "";
 
-		if (!invitation) {
-			invitation = await db.collection("pending_invitations").findOne({
+		if (type === "habit") {
+			// Look in habit invitation collections
+			invitation = await db
+				.collection("habit_collaboration_invitations")
+				.findOne({
+					_id: invitationId,
+					status: "pending",
+				});
+
+			if (!invitation) {
+				invitation = await db.collection("pending_habit_invitations").findOne({
+					_id: invitationId,
+					status: "pending",
+				});
+				if (invitation) invitationCollection = "pending_habit_invitations";
+			} else {
+				invitationCollection = "habit_collaboration_invitations";
+			}
+		} else {
+			// Default to quest invitations
+			invitation = await db.collection("collaboration_invitations").findOne({
 				_id: invitationId,
 				status: "pending",
 			});
+
+			if (!invitation) {
+				invitation = await db.collection("pending_invitations").findOne({
+					_id: invitationId,
+					status: "pending",
+				});
+				if (invitation) invitationCollection = "pending_invitations";
+			} else {
+				invitationCollection = "collaboration_invitations";
+			}
 		}
 
 		if (!invitation) {
-			console.error("❌ Invitation not found:", invitationId);
+			console.error("❌ Invitation not found:", invitationId, "Type:", type);
 			return NextResponse.json(
 				{ error: { message: "Invitation not found or already processed" } },
 				{ status: 404 }
@@ -169,12 +198,18 @@ export async function POST(request: NextRequest) {
 
 		console.log("✅ Found invitation:", {
 			id: invitation._id,
-			questId: invitation.questId,
+			type: type,
+			collection: invitationCollection,
+			targetId: invitation.questId || invitation.habitId,
 			inviteeEmail: invitation.inviteeEmail,
 			inviteeId: invitation.inviteeId,
 			inviterEmail: invitation.inviterEmail,
 			status: invitation.status,
 		});
+
+		// Determine target ID and title based on type
+		const targetId = invitation.questId || invitation.habitId;
+		const targetTitle = invitation.questTitle || invitation.habitTitle;
 
 		// ============================================
 		// 3. VALIDATE INVITATION
@@ -211,8 +246,8 @@ export async function POST(request: NextRequest) {
 		// 4. UPDATE INVITATION STATUS
 		// ============================================
 		if (invitation.token) {
-			// From pending_invitations (new users)
-			await db.collection("pending_invitations").updateOne(
+			// From pending invitations (new users)
+			await db.collection(invitationCollection).updateOne(
 				{ _id: invitation._id },
 				{
 					$set: {
@@ -225,8 +260,8 @@ export async function POST(request: NextRequest) {
 				}
 			);
 		} else {
-			// From collaboration_invitations (existing users)
-			await db.collection("collaboration_invitations").updateOne(
+			// From regular collaboration invitations (existing users)
+			await db.collection(invitationCollection).updateOne(
 				{ _id: invitation._id },
 				{
 					$set: {
@@ -243,13 +278,13 @@ export async function POST(request: NextRequest) {
 		console.log("✅ Updated invitation status");
 
 		// ============================================
-		// 5. ADD USER TO QUEST COLLABORATORS
+		// 5. ADD USER TO TARGET COLLABORATORS
 		// ============================================
-		let questIdFilter;
+		let targetIdFilter;
 		try {
-			questIdFilter = { _id: new ObjectId(invitation.questId) };
+			targetIdFilter = { _id: new ObjectId(targetId) };
 		} catch {
-			questIdFilter = { _id: invitation.questId } as any;
+			targetIdFilter = { _id: targetId } as any;
 		}
 
 		const collaboratorData = {
@@ -261,20 +296,46 @@ export async function POST(request: NextRequest) {
 			role: "collaborator",
 		};
 
-		// Get quest first to check owner
-		const quest = await db.collection("goals").findOne(questIdFilter, {
-			projection: { userId: 1, title: 1, isCollaborative: 1, collaborators: 1 },
+		// Determine target collection based on type
+		const targetCollection = type === "habit" ? "habits" : "goals";
+		const userTargetCollection =
+			type === "habit" ? "user_habits" : "user_goals";
+		const notificationType =
+			type === "habit" ? "habit_collaboration" : "collaboration";
+
+		console.log("🎯 Target details:", {
+			targetCollection,
+			userTargetCollection,
+			notificationType,
+			targetId,
+			targetTitle,
 		});
 
-		if (!quest) {
+		// Get target first to check owner
+		const target = await db
+			.collection(targetCollection)
+			.findOne(targetIdFilter, {
+				projection: {
+					userId: 1,
+					title: 1,
+					isCollaborative: 1,
+					collaborators: 1,
+				},
+			});
+
+		if (!target) {
 			return NextResponse.json(
-				{ error: { message: "Quest not found" } },
+				{
+					error: {
+						message: `${type === "habit" ? "Habit" : "Quest"} not found`,
+					},
+				},
 				{ status: 404 }
 			);
 		}
 
-		// Update the goal - ADD user to collaborators
-		await db.collection("goals").updateOne(questIdFilter, {
+		// Update the target - ADD user to collaborators
+		await db.collection(targetCollection).updateOne(targetIdFilter, {
 			$addToSet: {
 				collaborators: collaboratorData,
 				accessibleTo: userIdString,
@@ -290,16 +351,16 @@ export async function POST(request: NextRequest) {
 			},
 		});
 
-		console.log("✅ Added user to quest collaborators");
+		console.log(`✅ Added user to ${type} collaborators`);
 
 		// ============================================
-		// 6. ADD QUEST TO USER'S PERSONAL GOALS
+		// 6. ADD TARGET TO USER'S PERSONAL COLLECTION
 		// ============================================
 		try {
-			await db.collection("user_goals").insertOne({
+			await db.collection(userTargetCollection).insertOne({
 				userId: userIdString,
 				userFirebaseUid: userFirebaseUid,
-				goalId: invitation.questId,
+				targetId: targetId,
 				role: "collaborator",
 				addedAt: timestamp,
 				status: "active",
@@ -309,9 +370,12 @@ export async function POST(request: NextRequest) {
 				inviterEmail: invitation.inviterEmail,
 				notificationRead: false,
 			});
-			console.log("✅ Added to user_goals collection");
+			console.log(`✅ Added to ${userTargetCollection} collection`);
 		} catch (error) {
-			console.log("ℹ️ user_goals error (might already exist):", error);
+			console.log(
+				`ℹ️ ${userTargetCollection} error (might already exist):`,
+				error
+			);
 		}
 
 		// ============================================
@@ -320,14 +384,15 @@ export async function POST(request: NextRequest) {
 		// Notification to inviter
 		await db.collection("notifications").insertOne({
 			userId: invitation.inviterId,
-			type: "collaboration_accepted",
+			type: `${notificationType}_accepted`,
 			title: "🎉 Invitation Accepted!",
 			message: `${
 				currentUser.displayName || currentUser.email
-			} accepted your invitation to collaborate on "${invitation.questTitle}"`,
+			} accepted your invitation to collaborate on "${targetTitle}"`,
 			data: {
-				questId: invitation.questId,
-				questTitle: invitation.questTitle,
+				targetId: targetId,
+				targetTitle: targetTitle,
+				targetType: type,
 				collaboratorId: userIdString,
 				collaboratorName: currentUser.displayName,
 				collaboratorEmail: currentUser.email,
@@ -340,12 +405,13 @@ export async function POST(request: NextRequest) {
 		// Notification to invitee
 		await db.collection("notifications").insertOne({
 			userId: userIdString,
-			type: "collaboration_joined",
+			type: `${notificationType}_joined`,
 			title: "🤝 Collaboration Started",
-			message: `You're now collaborating with ${invitation.inviterName} on "${invitation.questTitle}"`,
+			message: `You're now collaborating with ${invitation.inviterName} on "${targetTitle}"`,
 			data: {
-				questId: invitation.questId,
-				questTitle: invitation.questTitle,
+				targetId: targetId,
+				targetTitle: targetTitle,
+				targetType: type,
 				inviterId: invitation.inviterId,
 				inviterName: invitation.inviterName,
 				inviterEmail: invitation.inviterEmail,
@@ -357,21 +423,24 @@ export async function POST(request: NextRequest) {
 		console.log("✅ Created notifications");
 
 		// ============================================
-		// 8. GET UPDATED QUEST DETAILS
+		// 8. GET UPDATED TARGET DETAILS
 		// ============================================
-		const updatedQuest = await db.collection("goals").findOne(questIdFilter, {
-			projection: {
-				title: 1,
-				category: 1,
-				description: 1,
-				dueDate: 1,
-				userId: 1,
-				collaborators: 1,
-				createdAt: 1,
-				updatedAt: 1,
-				isCollaborative: 1,
-			},
-		});
+		const updatedTarget = await db
+			.collection(targetCollection)
+			.findOne(targetIdFilter, {
+				projection: {
+					title: 1,
+					name: 1,
+					category: 1,
+					description: 1,
+					dueDate: 1,
+					userId: 1,
+					collaborators: 1,
+					createdAt: 1,
+					updatedAt: 1,
+					isCollaborative: 1,
+				},
+			});
 
 		// Get inviter details
 		let inviter = null;
@@ -400,17 +469,18 @@ export async function POST(request: NextRequest) {
 		const responseData = {
 			success: true,
 			message: "🎉 Invitation accepted successfully!",
-			quest: {
-				id: invitation.questId,
-				title: updatedQuest?.title || invitation.questTitle,
-				category: updatedQuest?.category || "General",
-				description: updatedQuest?.description || "",
-				dueDate: updatedQuest?.dueDate,
-				isCollaborative: updatedQuest?.isCollaborative || true,
-				ownerId: updatedQuest?.userId?.toString?.(),
-				collaborators: updatedQuest?.collaborators || [collaboratorData],
-				createdAt: updatedQuest?.createdAt,
-				updatedAt: updatedQuest?.updatedAt,
+			target: {
+				id: targetId,
+				type: type,
+				title: updatedTarget?.title || updatedTarget?.name || targetTitle,
+				category: updatedTarget?.category || "General",
+				description: updatedTarget?.description || "",
+				dueDate: updatedTarget?.dueDate,
+				isCollaborative: updatedTarget?.isCollaborative || true,
+				ownerId: updatedTarget?.userId?.toString?.(),
+				collaborators: updatedTarget?.collaborators || [collaboratorData],
+				createdAt: updatedTarget?.createdAt,
+				updatedAt: updatedTarget?.updatedAt,
 			},
 			collaborator: {
 				userId: userIdString,
@@ -462,6 +532,7 @@ export async function OPTIONS(request: NextRequest) {
 	const origin = request.headers.get("origin") || "";
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
+		"https://questzen.app",
 		"http://localhost:5173",
 		"http://localhost:3000",
 	];
