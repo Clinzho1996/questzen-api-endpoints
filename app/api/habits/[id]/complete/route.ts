@@ -380,7 +380,7 @@ async function calculateSuccessRate(
 	if (completions.length === 0) return 0;
 
 	// Calculate success rate based on completed vs total
-	const completed: any = completions.filter((c) => c.completed === true);
+	const completed = completions.filter((c: any) => c.completed === true);
 	const successRate = Math.round((completed.length / completions.length) * 100);
 
 	console.log("📊 Success rate calculation:", {
