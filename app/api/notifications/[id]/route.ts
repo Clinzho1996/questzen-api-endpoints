@@ -62,7 +62,7 @@ export async function DELETE(
 ) {
 	try {
 		const user = await requireAuth(request);
-		const params = await context.params; // Await the params
+		const params = await context.params;
 		const db = await getDatabase();
 
 		await db.collection("notifications").deleteOne({
