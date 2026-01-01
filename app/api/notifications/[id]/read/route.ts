@@ -73,7 +73,7 @@ export async function PUT(
 				});
 			} else if (isUUID) {
 				existsCheck = await db.collection("notifications").findOne({
-					_id: params.id,
+					_id: params.id as any,
 				});
 			}
 
