@@ -1,4 +1,4 @@
-// app/api/collaborations/accept/route.ts
+// app/api/collaborations/accept/route.ts - UPDATED
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
@@ -7,11 +7,6 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(request: NextRequest) {
 	try {
 		console.log("🔑 ACCEPT INVITATION REQUEST STARTED");
-		console.log("📝 Request headers:", {
-			authorization: request.headers.get("authorization"),
-			contentType: request.headers.get("content-type"),
-			origin: request.headers.get("origin"),
-		});
 
 		const user = await requireAuth(request);
 		console.log("✅ requireAuth successful:", {
@@ -21,16 +16,9 @@ export async function POST(request: NextRequest) {
 		});
 
 		const body = await request.json();
-		const { invitationId, type = "quest" } = body; // Add type parameter
+		const { invitationId, type = "quest" } = body;
 
 		console.log("🎯 Accepting invitation:", invitationId, "Type:", type);
-		console.log("🔐 Auth user from requireAuth:", {
-			userId: user.userId,
-			email: user.email,
-			provider: user.provider,
-			firebaseUid: user.firebaseUid,
-			isMongoDBId: /^[0-9a-fA-F]{24}$/.test(user.userId),
-		});
 
 		if (!invitationId) {
 			return NextResponse.json(
@@ -43,7 +31,7 @@ export async function POST(request: NextRequest) {
 		const timestamp = new Date();
 
 		// ============================================
-		// 1. FIND USER IN MONGODB (UPDATED FOR CUSTOM JWT)
+		// 1. FIND USER IN MONGODB
 		// ============================================
 		let currentUser = null;
 
@@ -92,12 +80,8 @@ export async function POST(request: NextRequest) {
 		if (!currentUser) {
 			console.log("🔄 User not found in MongoDB, creating new user...");
 
-			// Determine user type
-			const isMongoDBUser = /^[0-9a-fA-F]{24}$/.test(user.userId);
-			const isFirebaseUser = user.provider === "firebase";
-
 			const newUser = {
-				firebaseUid: isFirebaseUser ? user.userId : undefined,
+				firebaseUid: user.userId,
 				email: user.email || "",
 				displayName: user.email?.split("@")[0] || "QuestZen User",
 				photoURL: "",
@@ -133,15 +117,13 @@ export async function POST(request: NextRequest) {
 			});
 		}
 
-		// Get user IDs - USE MONGODB _id AS PRIMARY
-		const userIdString = currentUser._id.toString(); // MongoDB _id string
-		const userFirebaseUid = currentUser.firebaseUid; // Firebase UID if exists
-		const userIdObjectId = currentUser._id;
+		// Get user IDs
+		const userIdString = currentUser._id.toString();
+		const userFirebaseUid = currentUser.firebaseUid;
 
-		console.log("🎯 Using IDs:", {
-			userIdString, // Primary ID: MongoDB _id string
-			userFirebaseUid, // Secondary ID
-			userIdObjectId: userIdObjectId?.toString(),
+		console.log("🎯 Using user IDs:", {
+			userIdString,
+			userFirebaseUid,
 		});
 
 		// ============================================
@@ -202,7 +184,6 @@ export async function POST(request: NextRequest) {
 			collection: invitationCollection,
 			targetId: invitation.questId || invitation.habitId,
 			inviteeEmail: invitation.inviteeEmail,
-			inviteeId: invitation.inviteeId,
 			inviterEmail: invitation.inviterEmail,
 			status: invitation.status,
 		});
@@ -288,8 +269,8 @@ export async function POST(request: NextRequest) {
 		}
 
 		const collaboratorData = {
-			userId: userIdString, // MongoDB _id string
-			userFirebaseUid: userFirebaseUid, // Firebase UID if exists
+			userId: userIdString,
+			userFirebaseUid: userFirebaseUid,
 			email: currentUser.email,
 			displayName: currentUser.displayName,
 			joinedAt: timestamp,
@@ -318,6 +299,7 @@ export async function POST(request: NextRequest) {
 				projection: {
 					userId: 1,
 					title: 1,
+					name: 1,
 					isCollaborative: 1,
 					collaborators: 1,
 				},
@@ -334,11 +316,39 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		// Update the target - ADD user to collaborators
-		await db.collection(targetCollection).updateOne(targetIdFilter, {
+		// Get owner info for habit
+		let ownerInfo = null;
+		if (target.userId && type === "habit") {
+			try {
+				ownerInfo = await db.collection("users").findOne(
+					{ _id: target.userId },
+					{
+						projection: {
+							displayName: 1,
+							email: 1,
+							photoURL: 1,
+							_id: 1,
+						},
+					}
+				);
+			} catch (error) {
+				console.log("⚠️ Error fetching owner info:", error);
+			}
+		}
+
+		// Update the target - ADD user to collaborators and mark as collaborative
+		const updateData: any = {
 			$addToSet: {
 				collaborators: collaboratorData,
 				accessibleTo: userIdString,
+				participants: {
+					userId: userIdString,
+					userFirebaseUid: userFirebaseUid,
+					email: currentUser.email,
+					displayName: currentUser.displayName,
+					role: "collaborator",
+					joinedAt: timestamp,
+				},
 			},
 			$pull: {
 				pendingInvitations: {
@@ -349,9 +359,28 @@ export async function POST(request: NextRequest) {
 				updatedAt: timestamp,
 				isCollaborative: true,
 			},
-		});
+		};
 
-		console.log(`✅ Added user to ${type} collaborators`);
+		// Add owner info for habits if available
+		if (ownerInfo && type === "habit") {
+			updateData.$set.ownerInfo = {
+				ownerId: ownerInfo._id?.toString(),
+				ownerName: ownerInfo.displayName || "QuestZen User",
+				ownerEmail: ownerInfo.email,
+				ownerPhotoURL: ownerInfo.photoURL,
+			};
+
+			// Add inviter info for collaborators
+			updateData.$set.inviterId = invitation.inviterId;
+			updateData.$set.inviterName = invitation.inviterName;
+			updateData.$set.inviterEmail = invitation.inviterEmail;
+		}
+
+		await db.collection(targetCollection).updateOne(targetIdFilter, updateData);
+
+		console.log(
+			`✅ Added user to ${type} collaborators and marked as collaborative`
+		);
 
 		// ============================================
 		// 6. ADD TARGET TO USER'S PERSONAL COLLECTION
@@ -361,6 +390,8 @@ export async function POST(request: NextRequest) {
 				userId: userIdString,
 				userFirebaseUid: userFirebaseUid,
 				targetId: targetId,
+				targetType: type,
+				targetTitle: targetTitle,
 				role: "collaborator",
 				addedAt: timestamp,
 				status: "active",
@@ -368,6 +399,14 @@ export async function POST(request: NextRequest) {
 				inviterId: invitation.inviterId,
 				inviterName: invitation.inviterName,
 				inviterEmail: invitation.inviterEmail,
+				ownerId: target.userId?.toString?.(),
+				ownerInfo: ownerInfo
+					? {
+							ownerId: ownerInfo._id?.toString(),
+							ownerName: ownerInfo.displayName,
+							ownerEmail: ownerInfo.email,
+					  }
+					: null,
 				notificationRead: false,
 			});
 			console.log(`✅ Added to ${userTargetCollection} collection`);
@@ -436,9 +475,14 @@ export async function POST(request: NextRequest) {
 					dueDate: 1,
 					userId: 1,
 					collaborators: 1,
+					participants: 1,
 					createdAt: 1,
 					updatedAt: 1,
 					isCollaborative: 1,
+					ownerInfo: 1,
+					inviterId: 1,
+					inviterName: 1,
+					inviterEmail: 1,
 				},
 			});
 
@@ -478,7 +522,18 @@ export async function POST(request: NextRequest) {
 				dueDate: updatedTarget?.dueDate,
 				isCollaborative: updatedTarget?.isCollaborative || true,
 				ownerId: updatedTarget?.userId?.toString?.(),
+				ownerInfo: updatedTarget?.ownerInfo,
 				collaborators: updatedTarget?.collaborators || [collaboratorData],
+				participants: updatedTarget?.participants || [
+					{
+						userId: userIdString,
+						userFirebaseUid: userFirebaseUid,
+						email: currentUser.email,
+						displayName: currentUser.displayName,
+						role: "collaborator",
+						joinedAt: timestamp,
+					},
+				],
 				createdAt: updatedTarget?.createdAt,
 				updatedAt: updatedTarget?.updatedAt,
 			},
