@@ -1,3 +1,4 @@
+// app/api/collaborations/habits/invite/route.ts
 import { requireAuth } from "@/lib/auth";
 import { sendCollaborationEmail } from "@/lib/email";
 import { getDatabase } from "@/lib/mongodb";
@@ -11,11 +12,11 @@ export async function POST(request: NextRequest) {
 		const body = await request.json();
 		const {
 			emails,
-			questId,
-			questTitle,
+			habitId,
+			habitTitle,
 			inviterName,
 			inviterEmail,
-			questDescription = "",
+			habitDescription = "",
 		} = body;
 
 		if (!emails || !Array.isArray(emails) || emails.length === 0) {
@@ -25,9 +26,9 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
-		if (!questId || !questTitle) {
+		if (!habitId || !habitTitle) {
 			return NextResponse.json(
-				{ error: { message: "Quest information is required" } },
+				{ error: { message: "Habit information is required" } },
 				{ status: 400 }
 			);
 		}
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest) {
 			isMongoDBId: /^[0-9a-fA-F]{24}$/.test(inviter.userId),
 		});
 
-		// Get inviter's details - UPDATED FOR CUSTOM JWT
+		// Get inviter's details
 		let inviterData = null;
 
 		// Strategy 1: If userId is MongoDB ID, look by _id
@@ -66,24 +67,7 @@ export async function POST(request: NextRequest) {
 			}
 		}
 
-		// Strategy 2: Look by firebaseUid (for Firebase users)
-		if (!inviterData && inviter.userId) {
-			inviterData = await db.collection("users").findOne(
-				{ firebaseUid: inviter.userId },
-				{
-					projection: {
-						displayName: 1,
-						email: 1,
-						photoURL: 1,
-						_id: 1,
-						firebaseUid: 1,
-					},
-				}
-			);
-			console.log("✅ Found inviter by firebaseUid");
-		}
-
-		// Strategy 3: Look by email
+		// Strategy 2: Look by email
 		if (!inviterData && inviter.email) {
 			inviterData = await db.collection("users").findOne(
 				{ email: inviter.email.toLowerCase().trim() },
@@ -134,78 +118,71 @@ export async function POST(request: NextRequest) {
 			inviterName || inviterData?.displayName || "QuestZen User";
 		const inviterDisplayEmail =
 			inviterEmail || inviterData?.email || inviter.email || "";
-		const inviterId = inviterData?._id?.toString() || inviter.userId; // Use MongoDB _id
+		const inviterId = inviterData?._id?.toString() || inviter.userId;
 		const inviterMongoId = inviterData?._id;
-		const inviterFirebaseUid = inviterData?.firebaseUid;
 
 		console.log("👤 FINAL Inviter details:", {
 			inviterDisplayName,
 			inviterDisplayEmail,
-			inviterId, // MongoDB _id string
+			inviterId,
 			inviterMongoId: inviterMongoId?.toString(),
-			firebaseUid: inviterFirebaseUid,
 		});
 
-		// Get quest details
-		let questIdFilter;
+		// Get habit details from habits collection
+		let habitIdFilter;
 		try {
-			questIdFilter = { _id: new ObjectId(questId) };
+			habitIdFilter = { _id: new ObjectId(habitId) };
 		} catch {
-			questIdFilter = { _id: questId } as any;
+			habitIdFilter = { _id: habitId } as any;
 		}
 
-		const quest = await db.collection("goals").findOne(questIdFilter, {
+		const habit = await db.collection("habits").findOne(habitIdFilter, {
 			projection: {
-				title: 1,
+				name: 1,
 				category: 1,
 				description: 1,
-				dueDate: 1,
 				userId: 1, // Owner ID
 				collaborators: 1,
 				isCollaborative: 1,
 			},
 		});
 
-		if (!quest) {
+		if (!habit) {
 			return NextResponse.json(
-				{ error: { message: "Quest not found" } },
+				{ error: { message: "Habit not found" } },
 				{ status: 404 }
 			);
 		}
 
-		// Verify the current user is the quest owner
-		let isQuestOwner = false;
-		const questOwnerId = quest.userId;
+		// Verify the current user is the habit owner
+		let isHabitOwner = false;
+		const habitOwnerId = habit.userId;
 
-		if (questOwnerId instanceof ObjectId) {
-			isQuestOwner = questOwnerId.equals(inviterMongoId);
-		} else if (typeof questOwnerId === "string") {
-			isQuestOwner =
-				questOwnerId === inviterId ||
-				questOwnerId === inviterMongoId?.toString() ||
-				questOwnerId === inviterFirebaseUid;
+		if (habitOwnerId instanceof ObjectId) {
+			isHabitOwner = habitOwnerId.equals(inviterMongoId);
+		} else if (typeof habitOwnerId === "string") {
+			isHabitOwner =
+				habitOwnerId === inviterId ||
+				habitOwnerId === inviterMongoId?.toString();
 		}
 
-		if (!isQuestOwner) {
-			console.log("❌ User is not quest owner:", {
-				questOwnerId: questOwnerId?.toString?.(),
+		if (!isHabitOwner) {
+			console.log("❌ User is not habit owner:", {
+				habitOwnerId: habitOwnerId?.toString?.(),
 				inviterId,
 				inviterMongoId: inviterMongoId?.toString(),
-				inviterFirebaseUid,
 			});
 			return NextResponse.json(
-				{ error: { message: "Only quest owners can invite collaborators" } },
+				{ error: { message: "Only habit owners can invite collaborators" } },
 				{ status: 403 }
 			);
 		}
 
-		const questDetails = {
-			title: questTitle,
-			category: quest?.category || "General",
-			description: quest?.description || questDescription,
-			dueDate: quest?.dueDate
-				? new Date(quest.dueDate).toLocaleDateString()
-				: "No due date",
+		const habitDetails = {
+			title: habitTitle,
+			name: habit.name,
+			category: habit?.category || "General",
+			description: habit?.description || habitDescription,
 		};
 
 		const results = {
@@ -235,46 +212,44 @@ export async function POST(request: NextRequest) {
 				if (existingUser) {
 					console.log(`👤 Existing user found for ${cleanEmail}:`, {
 						userId: existingUser._id.toString(),
-						firebaseUid: existingUser.firebaseUid,
 					});
 
-					// Get invitee IDs
-					const inviteeId = existingUser._id.toString(); // Use MongoDB _id
-					const inviteeFirebaseUid = existingUser.firebaseUid;
+					// Get invitee ID
+					const inviteeId = existingUser._id.toString();
 
 					// Create invitation record for existing user
 					const invitationData = {
 						_id: invitationId,
-						questId,
-						questTitle: questDetails.title,
-						inviterId: inviterId, // MongoDB _id string
+						type: "habit", // Add type field to distinguish from quest invitations
+						habitId,
+						habitTitle: habitDetails.title,
+						inviterId: inviterId,
 						inviterMongoId: inviterMongoId,
 						inviterName: inviterDisplayName,
 						inviterEmail: inviterDisplayEmail,
 						inviteeEmail: cleanEmail,
-						inviteeId: inviteeId, // MongoDB _id string
+						inviteeId: inviteeId,
 						inviteeMongoId: existingUser._id,
-						inviteeFirebaseUid: inviteeFirebaseUid,
 						status: "pending",
 						createdAt: timestamp,
 						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000),
 					};
 
 					await db
-						.collection("collaboration_invitations")
+						.collection("habit_collaboration_invitations") // Separate collection for habits
 						.insertOne(invitationData as any);
 
 					// Create notification for existing user
 					const notificationId = uuidv4();
 					await db.collection("notifications").insertOne({
 						_id: notificationId as any,
-						userId: inviteeId, // Use MongoDB _id
-						type: "collaboration_invite",
-						title: "🎯 Collaboration Invitation",
-						message: `${inviterDisplayName} invited you to collaborate on "${questDetails.title}"`,
+						userId: inviteeId,
+						type: "habit_collaboration_invite",
+						title: "🎯 Habit Collaboration Invitation",
+						message: `${inviterDisplayName} invited you to collaborate on habit "${habitDetails.title}"`,
 						data: {
-							questId,
-							questTitle: questDetails.title,
+							habitId,
+							habitTitle: habitDetails.title,
 							inviterId: inviterId,
 							inviterName: inviterDisplayName,
 							inviterEmail: inviterDisplayEmail,
@@ -286,8 +261,8 @@ export async function POST(request: NextRequest) {
 						expiresAt: new Date(timestamp.getTime() + 30 * 24 * 60 * 60 * 1000),
 					});
 
-					// Add to pending invitations on the goal
-					await db.collection("goals").updateOne(questIdFilter, {
+					// Add to pending invitations on the habit
+					await db.collection("habits").updateOne(habitIdFilter, {
 						$addToSet: {
 							pendingInvitations: {
 								email: cleanEmail,
@@ -305,10 +280,11 @@ export async function POST(request: NextRequest) {
 					console.log(`👤 New user invitation for ${cleanEmail}`);
 
 					// Create pending invitation for new user
-					await db.collection("pending_invitations").insertOne({
+					await db.collection("pending_habit_invitations").insertOne({
 						_id: invitationId as any,
-						questId,
-						questTitle: questDetails.title,
+						type: "habit",
+						habitId,
+						habitTitle: habitDetails.title,
 						inviterId: inviterId,
 						inviterMongoId: inviterMongoId,
 						inviterName: inviterDisplayName,
@@ -316,12 +292,12 @@ export async function POST(request: NextRequest) {
 						inviteeEmail: cleanEmail,
 						status: "pending",
 						createdAt: timestamp,
-						token: uuidv4(), // For secure acceptance link
+						token: uuidv4(),
 						expiresAt: new Date(timestamp.getTime() + 7 * 24 * 60 * 60 * 1000),
 					});
 
-					// Add to pending invitations on the goal
-					await db.collection("goals").updateOne(questIdFilter, {
+					// Add to pending invitations on the habit
+					await db.collection("habits").updateOne(habitIdFilter, {
 						$addToSet: {
 							pendingInvitations: {
 								email: cleanEmail,
@@ -342,17 +318,16 @@ export async function POST(request: NextRequest) {
 					await sendCollaborationEmail(cleanEmail, {
 						inviterName: inviterDisplayName,
 						inviterEmail: inviterDisplayEmail,
-						questTitle: questDetails.title,
-						questCategory: questDetails.category,
-						questDescription: questDetails.description,
-						questDueDate: questDetails.dueDate,
+						habitTitle: habitDetails.title,
+						habitCategory: habitDetails.category,
+						habitDescription: habitDetails.description,
 						invitationId,
 						isExistingUser: !!existingUser,
+						type: "habit", // Specify it's a habit invitation
 					});
 					results.sentEmails.push(cleanEmail);
 				} catch (emailError: any) {
 					console.error(`Email failed for ${cleanEmail}:`, emailError);
-					// Don't fail the whole request if email fails
 				}
 			} catch (error: any) {
 				console.error(`Error processing invitation for ${email}:`, error);
@@ -363,8 +338,8 @@ export async function POST(request: NextRequest) {
 			}
 		}
 
-		// Mark quest as collaborative
-		await db.collection("goals").updateOne(questIdFilter, {
+		// Mark habit as collaborative
+		await db.collection("habits").updateOne(habitIdFilter, {
 			$set: {
 				isCollaborative: true,
 				updatedAt: timestamp,
@@ -373,7 +348,7 @@ export async function POST(request: NextRequest) {
 
 		const response = NextResponse.json({
 			success: true,
-			message: "Invitations processed successfully",
+			message: "Habit invitations processed successfully",
 			summary: {
 				totalInvited: emails.length,
 				sentEmails: results.sentEmails.length,
@@ -394,9 +369,9 @@ export async function POST(request: NextRequest) {
 				name: inviterDisplayName,
 				email: inviterDisplayEmail,
 			},
-			quest: {
-				id: questId,
-				title: questDetails.title,
+			habit: {
+				id: habitId,
+				title: habitDetails.title,
 				isCollaborative: true,
 			},
 		});
@@ -416,7 +391,7 @@ export async function POST(request: NextRequest) {
 
 		return response;
 	} catch (error: any) {
-		console.error("Invitation processing error:", error);
+		console.error("Habit invitation processing error:", error);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json(
@@ -428,7 +403,7 @@ export async function POST(request: NextRequest) {
 		return NextResponse.json(
 			{
 				error: {
-					message: "Failed to process invitations",
+					message: "Failed to process habit invitations",
 					details: error.message,
 				},
 			},

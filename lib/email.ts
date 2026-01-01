@@ -290,23 +290,22 @@ export async function sendCollaborationEmail(
 	data: {
 		inviterName: string;
 		inviterEmail: string;
-		questTitle: string;
-		questCategory: string;
-		questDescription: string;
-		questDueDate: string;
+		habitTitle: string;
+		habitCategory: string;
+		habitDescription: string;
 		invitationId: string;
 		isExistingUser: boolean;
+		type?: "quest" | "habit";
 	}
 ) {
 	try {
 		const {
 			inviterName,
-			questTitle,
+			habitTitle,
 			invitationId,
 			isExistingUser,
-			questCategory,
-			questDescription,
-			questDueDate,
+			habitCategory,
+			habitDescription,
 		} = data;
 
 		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
@@ -314,27 +313,23 @@ export async function sendCollaborationEmail(
 		const signupUrl = `${frontendUrl}/signup?invitation=${invitationId}`;
 
 		const subject = isExistingUser
-			? `🎯 ${inviterName} invited you to collaborate on "${questTitle}"`
+			? `🎯 ${inviterName} invited you to collaborate on "${habitTitle}"`
 			: `🤝 Join QuestZen AI & collaborate with ${inviterName}`;
 
-		const questDetails = `
+		const habitDetails = `
       <div style="background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0; border-left: 4px solid #667eea;">
-        <h3 style="margin-top: 0; color: #2d3748;">${questTitle}</h3>
+        <h3 style="margin-top: 0; color: #2d3748;">${habitTitle}</h3>
         ${
-					questCategory
-						? `<p><strong>Category:</strong> ${questCategory}</p>`
+					habitCategory
+						? `<p><strong>Category:</strong> ${habitCategory}</p>`
 						: ""
 				}
         ${
-					questDescription
-						? `<p><strong>Description:</strong> ${questDescription}</p>`
+					habitDescription
+						? `<p><strong>Description:</strong> ${habitDescription}</p>`
 						: ""
 				}
-        ${
-					questDueDate && questDueDate !== "No due date"
-						? `<p><strong>Due Date:</strong> ${questDueDate}</p>`
-						: ""
-				}
+        
       </div>
     `;
 
@@ -471,12 +466,12 @@ export async function sendCollaborationEmail(
               </div>
             </div>
             
-            ${questDetails}
+            ${habitDetails}
             
             <div class="details">
               <p><strong>How collaboration works:</strong></p>
               <ul style="margin: 10px 0; padding-left: 20px;">
-                <li>View and edit the quest together</li>
+                <li>View and edit the habit together</li>
                 <li>Track progress in real-time</li>
                 <li>Chat with collaborators</li>
                 <li>Share achievements and XP</li>
@@ -533,20 +528,16 @@ export async function sendCollaborationEmail(
 		const text = `
       Collaboration Invitation from ${inviterName}
       
-      ${inviterName} has invited you to collaborate on the quest: "${questTitle}"
+      ${inviterName} has invited you to collaborate on the habit: "${habitTitle}"
+
+      Habit Details:
+      - Title: ${habitTitle}
+      ${habitCategory ? `- Category: ${habitCategory}\n` : ""}
+      ${habitDescription ? `- Description: ${habitDescription}\n` : ""}
       
-      Quest Details:
-      - Title: ${questTitle}
-      ${questCategory ? `- Category: ${questCategory}\n` : ""}
-      ${questDescription ? `- Description: ${questDescription}\n` : ""}
-      ${
-				questDueDate && questDueDate !== "No due date"
-					? `- Due Date: ${questDueDate}\n`
-					: ""
-			}
       
       How collaboration works:
-      • View and edit the quest together
+      • View and edit the habit together
       • Track progress in real-time
       • Chat with collaborators
       • Share achievements and XP
