@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 interface UnifiedUser {
 	id: string;
-	userId: string; // Firebase UID or MongoDB ID
+	userId: string;
 	name: string;
 	avatar: string;
 	xp: number;
@@ -35,32 +35,39 @@ export async function GET(request: NextRequest) {
 			.limit(50)
 			.toArray();
 
-		// Transform MongoDB users
-		const transformedMongoUsers: UnifiedUser[] = mongoUsers.map((userDoc) => ({
-			id: userDoc._id.toString(),
-			userId: userDoc.firebaseUid || userDoc._id.toString(),
-			name: userDoc.displayName || userDoc.email?.split("@")[0] || "Anonymous",
-			avatar:
-				userDoc.photoURL ||
-				`https://api.dicebear.com/7.x/avataaars/svg?seed=${userDoc._id}`,
-			xp: userDoc.xp || 0,
-			level: userDoc.level || 1,
-			completedGoals: userDoc.completedGoals || 0,
-			source: "mongodb" as const,
-			email: userDoc.email,
-			displayName: userDoc.displayName,
-			photoURL: userDoc.photoURL,
-			provider: userDoc.provider || "email",
-		}));
+		// **IMPROVED: Transform with provider information**
+		const transformedMongoUsers: UnifiedUser[] = mongoUsers.map((userDoc) => {
+			// Determine provider
+			let provider = "email"; // Default
+			if (userDoc.provider) {
+				provider = userDoc.provider;
+			} else if (userDoc.firebaseUid) {
+				provider = "google"; // Firebase users from Google
+			} else if (userDoc.password) {
+				provider = "email"; // Has password = email signup
+			}
 
-		// We'll need to get Firebase users too
-		// Since we can't directly query Firebase from Next.js backend,
-		// we'll rely on the frontend to fetch Firebase users and combine them
+			return {
+				id: userDoc._id.toString(),
+				userId: userDoc.firebaseUid || userDoc._id.toString(),
+				name:
+					userDoc.displayName || userDoc.email?.split("@")[0] || "Anonymous",
+				avatar:
+					userDoc.photoURL ||
+					`https://api.dicebear.com/7.x/avataaars/svg?seed=${userDoc._id}`,
+				xp: userDoc.xp || 0,
+				level: userDoc.level || 1,
+				completedGoals: userDoc.completedGoals || 0,
+				source: "mongodb" as const,
+				email: userDoc.email,
+				displayName: userDoc.displayName,
+				photoURL: userDoc.photoURL,
+				provider: provider,
+			};
+		});
 
-		const allUsers = [...transformedMongoUsers];
-
-		// Remove duplicates based on firebaseUid or email
-		const uniqueUsers = removeDuplicates(allUsers);
+		// **IMPROVED: Remove duplicates by email + provider**
+		const uniqueUsers = removeDuplicates(transformedMongoUsers);
 
 		// Sort by XP
 		const sortedUsers = uniqueUsers.sort((a, b) => b.xp - a.xp);
@@ -102,12 +109,25 @@ function removeDuplicates(users: UnifiedUser[]): UnifiedUser[] {
 	const seen = new Map<string, UnifiedUser>();
 
 	users.forEach((user) => {
-		// Try to use firebaseUid first, then email, then id
-		const key = user.userId || user.email || user.id;
+		// **KEY FIX: Use email + provider as unique key**
+		const email = user.email?.toLowerCase().trim();
+		const provider = user.provider || "unknown";
 
-		if (key && !seen.has(key)) {
+		let key: string;
+
+		if (email && provider) {
+			key = `${email}::${provider}`;
+		} else if (email) {
+			key = email;
+		} else if (user.userId) {
+			key = user.userId;
+		} else {
+			key = user.id;
+		}
+
+		if (!seen.has(key)) {
 			seen.set(key, user);
-		} else if (key && seen.has(key)) {
+		} else {
 			// Keep the one with higher XP
 			const existing = seen.get(key)!;
 			if (user.xp > existing.xp) {
@@ -116,6 +136,24 @@ function removeDuplicates(users: UnifiedUser[]): UnifiedUser[] {
 		}
 	});
 
+	console.log(`🔍 Deduplication: ${users.length} → ${seen.size} users`);
+
+	// Log duplicates found
+	if (users.length > seen.size) {
+		console.log("⚠️ Removed duplicates:");
+		const emailCounts = new Map<string, number>();
+		users.forEach((u) => {
+			const email = u.email?.toLowerCase().trim() || "no-email";
+			emailCounts.set(email, (emailCounts.get(email) || 0) + 1);
+		});
+
+		emailCounts.forEach((count, email) => {
+			if (count > 1) {
+				console.log(`   ${email}: ${count} entries`);
+			}
+		});
+	}
+
 	return Array.from(seen.values());
 }
 
@@ -123,29 +161,4 @@ function applyTimeFilter(users: UnifiedUser[], filter: string): UnifiedUser[] {
 	// For now, return all users
 	// You can implement time-based filtering later
 	return users;
-}
-
-export async function OPTIONS(request: NextRequest) {
-	const origin = request.headers.get("origin") || "http://localhost:5173";
-	const allowedOrigins = [
-		"https://questzenai.devclinton.org",
-		"http://localhost:5173",
-		"http://localhost:3000",
-	];
-
-	const response = new NextResponse(null, { status: 200 });
-
-	if (allowedOrigins.includes(origin)) {
-		response.headers.set("Access-Control-Allow-Origin", origin);
-	}
-	response.headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
-	response.headers.set(
-		"Access-Control-Allow-Headers",
-		"Content-Type, Authorization"
-	);
-	response.headers.set("Access-Control-Allow-Credentials", "true");
-	response.headers.set("Access-Control-Max-Age", "86400");
-	response.headers.set("Cache-Control", "no-store, max-age=0");
-
-	return response;
 }
