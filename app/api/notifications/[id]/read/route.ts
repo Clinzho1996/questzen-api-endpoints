@@ -65,10 +65,17 @@ export async function PUT(
 			console.log("❌ No notification matched the query");
 			console.log("🔍 Query was:", idQuery);
 
-			// Let's check if the notification exists at all
-			const existsCheck = await db.collection("notifications").findOne({
-				$or: [{ _id: new ObjectId(params.id) }, { _id: params.id }],
-			});
+			let existsCheck = null;
+
+			if (isObjectId) {
+				existsCheck = await db.collection("notifications").findOne({
+					_id: new ObjectId(params.id),
+				});
+			} else if (isUUID) {
+				existsCheck = await db.collection("notifications").findOne({
+					_id: params.id,
+				});
+			}
 
 			console.log("🔍 Exists check:", existsCheck ? "Found" : "Not found");
 			if (existsCheck) {
