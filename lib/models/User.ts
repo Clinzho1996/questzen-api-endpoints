@@ -1,5 +1,6 @@
 import { ObjectId } from "mongodb";
 
+// Update your User interface to include XP history
 export interface User {
 	_id?: ObjectId;
 	email: string;
@@ -36,9 +37,19 @@ export interface User {
 	xp: number;
 	achievements: string[];
 
+	// ADD XP HISTORY FOR TIME FILTERING
+	xpHistory?: Array<{
+		date: Date;
+		amount: number;
+		source: "habit" | "focus" | "goal" | "achievement" | "other";
+		description?: string;
+		metadata?: Record<string, any>;
+	}>;
+
 	// Additional stats that might be useful
 	completedGoals?: number;
 	focusSessions?: number;
+	completedHabits?: number; // ADD THIS FOR HABITS
 	premiumSince?: Date;
 	subscriptionStartDate?: Date;
 	lastPaymentDate?: Date;
