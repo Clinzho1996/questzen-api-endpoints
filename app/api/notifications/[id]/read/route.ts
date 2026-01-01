@@ -5,10 +5,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	context: { params: Promise<{ id: string }> }
 ) {
 	try {
 		console.log("🔵 [API] Marking notification as read");
+		const params = await context.params;
 		console.log("📝 Notification ID:", params.id);
 
 		// Authenticate user
