@@ -5,10 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(
 	request: NextRequest,
-	context: { params: Promise<{ id: string }> }
+	{ params }: { params: { id: string } }
 ) {
-	const params = await context.params;
-
 	try {
 		console.log("🔵 [API] Marking notification as read");
 		console.log("📝 Notification ID:", params.id);
@@ -20,30 +18,52 @@ export async function PUT(
 		// Get database connection
 		const db = await getDatabase();
 
-		// Validate notification ID
-		if (!ObjectId.isValid(params.id)) {
-			console.log("❌ Invalid notification ID format:", params.id);
+		// **Check if ID is a valid MongoDB ObjectId (24 hex chars)**
+		const isObjectId = /^[0-9a-fA-F]{24}$/.test(params.id);
+		console.log(`🔍 ID is ObjectId: ${isObjectId}`);
+
+		// **Check if ID is a UUID (36 chars with dashes)**
+		const isUUID =
+			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+				params.id
+			);
+		console.log(`🔍 ID is UUID: ${isUUID}`);
+
+		let query: any = {
+			userId: new ObjectId(user.userId),
+		};
+
+		// **Handle different ID formats**
+		if (isObjectId) {
+			query._id = new ObjectId(params.id);
+		} else if (isUUID) {
+			// UUIDs might be stored as strings in the _id field or in a separate id field
+			query.$or = [
+				{ _id: params.id }, // Try as string _id
+				{ id: params.id }, // Try as separate id field
+			];
+		} else {
+			console.log("❌ Invalid ID format");
 			return NextResponse.json(
-				{ error: "Invalid notification ID" },
+				{ error: "Invalid notification ID format" },
 				{ status: 400 }
 			);
 		}
 
-		const notificationId = new ObjectId(params.id);
-		const userId = new ObjectId(user.userId);
+		console.log("🔍 Query for notification:", query);
 
-		console.log("🔍 Querying for notification:", {
-			_id: notificationId,
-			userId: userId,
-		});
+		// First, find the notification
+		const notification = await db.collection("notifications").findOne(query);
 
-		// First, let's check if the notification exists
-		const notification = await db.collection("notifications").findOne({
-			_id: notificationId,
-			userId: userId,
-		});
-
-		console.log("🔍 Found notification:", notification);
+		console.log("🔍 Found notification:", notification ? "Yes" : "No");
+		if (notification) {
+			console.log("📝 Notification details:", {
+				_id: notification._id,
+				_idType: typeof notification._id,
+				id: notification.id,
+				userId: notification.userId,
+			});
+		}
 
 		if (!notification) {
 			console.log("❌ Notification not found or not owned by user");
@@ -55,11 +75,11 @@ export async function PUT(
 
 		console.log("📝 Current read status:", notification.read);
 
-		// Update the notification
+		// Update the notification using its actual _id from the found document
 		const result = await db.collection("notifications").updateOne(
 			{
-				_id: notificationId,
-				userId: userId,
+				_id: notification._id, // Use the actual _id from the found document
+				userId: new ObjectId(user.userId),
 			},
 			{
 				$set: {
@@ -72,7 +92,6 @@ export async function PUT(
 		console.log("📝 MongoDB Update result:", {
 			matchedCount: result.matchedCount,
 			modifiedCount: result.modifiedCount,
-			upsertedCount: result.upsertedCount,
 			acknowledged: result.acknowledged,
 		});
 
@@ -84,20 +103,7 @@ export async function PUT(
 			);
 		}
 
-		if (result.modifiedCount === 0) {
-			console.log("⚠️ Notification was already marked as read");
-			// This is okay - we still return success
-		}
-
 		console.log("✅ Notification marked as read successfully");
-
-		// Verify the update by fetching the updated document
-		const updatedNotification = await db.collection("notifications").findOne({
-			_id: notificationId,
-			userId: userId,
-		});
-
-		console.log("✅ Verified updated read status:", updatedNotification?.read);
 
 		return NextResponse.json({
 			success: true,
@@ -107,17 +113,13 @@ export async function PUT(
 		});
 	} catch (error: any) {
 		console.error("❌ [API] Error marking notification as read:", error);
-		console.error("❌ Error stack:", error.stack);
 
 		if (error.message === "Unauthorized") {
 			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 		}
 
 		return NextResponse.json(
-			{
-				error: "Internal server error",
-				details: error.message,
-			},
+			{ error: "Internal server error" },
 			{ status: 500 }
 		);
 	}

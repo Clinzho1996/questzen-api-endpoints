@@ -8,7 +8,7 @@ export async function PUT(request: NextRequest) {
 		const user = await requireAuth(request);
 		const db = await getDatabase();
 
-		await db.collection("notifications").updateMany(
+		const result = await db.collection("notifications").updateMany(
 			{
 				userId: new ObjectId(user.userId),
 				read: false,
@@ -21,33 +21,23 @@ export async function PUT(request: NextRequest) {
 			}
 		);
 
+		console.log(`✅ Marked ${result.modifiedCount} notifications as read`);
+
 		return NextResponse.json({
-			message: "All notifications marked as read",
+			success: true,
+			message: `Marked ${result.modifiedCount} notifications as read`,
+			count: result.modifiedCount,
 		});
 	} catch (error: any) {
+		console.error("❌ [API] Error marking all as read:", error);
+
 		if (error.message === "Unauthorized") {
-			return NextResponse.json(
-				{
-					error: {
-						message: "Unauthorized",
-					},
-				},
-				{
-					status: 401,
-				}
-			);
+			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 		}
 
-		console.error("Mark all as read error:", error);
 		return NextResponse.json(
-			{
-				error: {
-					message: "Server error",
-				},
-			},
-			{
-				status: 500,
-			}
+			{ error: "Internal server error" },
+			{ status: 500 }
 		);
 	}
 }
