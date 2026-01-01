@@ -12,83 +12,48 @@ export async function PUT(
 		const params = await context.params;
 		console.log("📝 Notification ID:", params.id);
 
-		// Authenticate user
 		const user = await requireAuth(request);
 		console.log("👤 User ID:", user.userId);
 
-		// Get database connection
 		const db = await getDatabase();
 
-		// **Check if ID is a valid MongoDB ObjectId (24 hex chars)**
+		// Check ID format
 		const isObjectId = /^[0-9a-fA-F]{24}$/.test(params.id);
-		console.log(`🔍 ID is ObjectId: ${isObjectId}`);
-
-		// **Check if ID is a UUID (36 chars with dashes)**
 		const isUUID =
 			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
 				params.id
 			);
-		console.log(`🔍 ID is UUID: ${isUUID}`);
 
-		let query: any = {
-			userId: new ObjectId(user.userId),
-		};
+		console.log(`🔍 ID is ObjectId: ${isObjectId}, is UUID: ${isUUID}`);
 
-		// **Handle different ID formats**
+		// **CORRECTED: Build query based on your database structure**
+		let idQuery: any = {};
+
 		if (isObjectId) {
-			query._id = new ObjectId(params.id);
+			// For ObjectId _id
+			idQuery._id = new ObjectId(params.id);
 		} else if (isUUID) {
-			// UUIDs might be stored as strings in the _id field or in a separate id field
-			query.$or = [
-				{ _id: params.id }, // Try as string _id
-				{ id: params.id }, // Try as separate id field
-			];
+			// For UUID _id (stored as string)
+			idQuery._id = params.id;
 		} else {
-			console.log("❌ Invalid ID format");
 			return NextResponse.json(
 				{ error: "Invalid notification ID format" },
 				{ status: 400 }
 			);
 		}
 
-		console.log("🔍 Query for notification:", query);
+		// **IMPORTANT: userId is stored as STRING in your database**
+		idQuery.userId = user.userId; // String comparison, not ObjectId
 
-		// First, find the notification
-		const notification = await db.collection("notifications").findOne(query);
+		console.log("🔍 Final query:", JSON.stringify(idQuery, null, 2));
 
-		console.log("🔍 Found notification:", notification ? "Yes" : "No");
-		if (notification) {
-			console.log("📝 Notification details:", {
-				_id: notification._id,
-				_idType: typeof notification._id,
-				id: notification.id,
-				userId: notification.userId,
-			});
-		}
-
-		if (!notification) {
-			console.log("❌ Notification not found or not owned by user");
-			return NextResponse.json(
-				{ error: "Notification not found" },
-				{ status: 404 }
-			);
-		}
-
-		console.log("📝 Current read status:", notification.read);
-
-		// Update the notification using its actual _id from the found document
-		const result = await db.collection("notifications").updateOne(
-			{
-				_id: notification._id, // Use the actual _id from the found document
-				userId: new ObjectId(user.userId),
+		// Update the notification
+		const result = await db.collection("notifications").updateOne(idQuery, {
+			$set: {
+				read: true,
+				updatedAt: new Date(),
 			},
-			{
-				$set: {
-					read: true,
-					updatedAt: new Date(),
-				},
-			}
-		);
+		});
 
 		console.log("📝 MongoDB Update result:", {
 			matchedCount: result.matchedCount,
@@ -98,8 +63,24 @@ export async function PUT(
 
 		if (result.matchedCount === 0) {
 			console.log("❌ No notification matched the query");
+			console.log("🔍 Query was:", idQuery);
+
+			// Let's check if the notification exists at all
+			const existsCheck = await db.collection("notifications").findOne({
+				$or: [{ _id: new ObjectId(params.id) }, { _id: params.id }],
+			});
+
+			console.log("🔍 Exists check:", existsCheck ? "Found" : "Not found");
+			if (existsCheck) {
+				console.log("🔍 Found notification but wrong user:", {
+					notificationUserId: existsCheck.userId,
+					requestUserId: user.userId,
+					match: existsCheck.userId === user.userId,
+				});
+			}
+
 			return NextResponse.json(
-				{ error: "Notification not found" },
+				{ error: "Notification not found or not owned by user" },
 				{ status: 404 }
 			);
 		}
