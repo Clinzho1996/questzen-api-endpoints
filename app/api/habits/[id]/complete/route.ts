@@ -257,11 +257,17 @@ export async function POST(
 			}
 		}
 
+		const successRate = await calculateSuccessRate(
+			db,
+			new ObjectId(habitId),
+			currentUser._id
+		);
 		// Update streak in habit
 		await db.collection("habits").updateOne(
 			{ _id: new ObjectId(habitId) },
 			{
 				$set: {
+					"stats.successRate": successRate,
 					"stats.currentStreak": currentStreak,
 					"stats.bestStreak": Math.max(
 						currentStreak,
@@ -355,4 +361,33 @@ async function updateUserXP(
 	}
 
 	return null;
+}
+
+async function calculateSuccessRate(
+	db: any,
+	habitId: ObjectId,
+	userId: ObjectId
+) {
+	// Get total completion attempts for this habit
+	const completions = await db
+		.collection("habit_completions")
+		.find({
+			habitId: habitId,
+			userId: userId,
+		})
+		.toArray();
+
+	if (completions.length === 0) return 0;
+
+	// Calculate success rate based on completed vs total
+	const completed: any = completions.filter((c) => c.completed === true);
+	const successRate = Math.round((completed.length / completions.length) * 100);
+
+	console.log("📊 Success rate calculation:", {
+		totalAttempts: completions.length,
+		completed: completed.length,
+		successRate: `${successRate}%`,
+	});
+
+	return successRate;
 }
