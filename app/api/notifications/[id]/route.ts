@@ -58,32 +58,31 @@ export async function PATCH(
 
 export async function DELETE(
 	request: NextRequest,
-	context: { params: Promise<{ id: string }> }
+	{ params }: { params: { id: string } }
 ) {
 	try {
-		const params = await context.params;
 		console.log("🔵 [API] Deleting notification");
 		console.log("🗑️ Notification ID:", params.id);
 
 		const user = await requireAuth(request);
 		const db = await getDatabase();
 
-		// **Check ID format**
+		// Check ID format
 		const isObjectId = /^[0-9a-fA-F]{24}$/.test(params.id);
 		const isUUID =
 			/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
 				params.id
 			);
 
+		// Build query
 		let query: any = {
-			userId: new ObjectId(user.userId),
+			userId: user.userId, // String userId
 		};
 
-		// **Handle different ID formats**
 		if (isObjectId) {
 			query._id = new ObjectId(params.id);
 		} else if (isUUID) {
-			query.$or = [{ _id: params.id }, { id: params.id }];
+			query._id = params.id;
 		} else {
 			return NextResponse.json(
 				{ error: "Invalid notification ID format" },
@@ -93,22 +92,7 @@ export async function DELETE(
 
 		console.log("🔍 Delete query:", query);
 
-		// First find the notification to get its actual _id
-		const notification = await db.collection("notifications").findOne(query);
-
-		if (!notification) {
-			console.log("❌ Notification not found");
-			return NextResponse.json(
-				{ error: "Notification not found" },
-				{ status: 404 }
-			);
-		}
-
-		// Delete using the actual _id
-		const result = await db.collection("notifications").deleteOne({
-			_id: notification._id,
-			userId: new ObjectId(user.userId),
-		});
+		const result = await db.collection("notifications").deleteOne(query);
 
 		console.log("🗑️ Delete result:", result);
 

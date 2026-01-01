@@ -1,6 +1,5 @@
 import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
-import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(request: NextRequest) {
@@ -8,9 +7,10 @@ export async function PUT(request: NextRequest) {
 		const user = await requireAuth(request);
 		const db = await getDatabase();
 
+		// **CORRECTED: userId is string**
 		const result = await db.collection("notifications").updateMany(
 			{
-				userId: new ObjectId(user.userId),
+				userId: user.userId, // String
 				read: false,
 			},
 			{
@@ -21,7 +21,9 @@ export async function PUT(request: NextRequest) {
 			}
 		);
 
-		console.log(`✅ Marked ${result.modifiedCount} notifications as read`);
+		console.log(
+			`✅ Marked ${result.modifiedCount} notifications as read for user ${user.userId}`
+		);
 
 		return NextResponse.json({
 			success: true,
