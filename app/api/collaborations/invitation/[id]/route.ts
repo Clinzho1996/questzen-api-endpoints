@@ -3,21 +3,19 @@ import { getDatabase } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 // Important: Export the config to mark as dynamic
-export const dynamic = "force-dynamic"; // Prevents static generation
+export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
 // For Next.js 15: Generate static params if needed
 export async function generateStaticParams() {
-	// Return empty array since we don't know invitation IDs at build time
 	return [];
 }
 
 export async function GET(
 	request: NextRequest,
-	{ params }: { params: Promise<{ id: string }> } // CHANGED: params is now a Promise in Next.js 15
+	{ params }: { params: Promise<{ id: string }> }
 ) {
 	try {
-		// CHANGED: Await the params Promise
 		const { id } = await params;
 
 		console.log("✅ Extracted invitation ID:", id);
@@ -32,72 +30,39 @@ export async function GET(
 		}
 
 		const db = await getDatabase();
+		console.log("📊 Checking database for invitation:", id);
 
-		// DEBUG: Log all invitations to see what's in DB
-		console.log("📊 Checking database for invitations...");
-
-		// First, let's see what's actually in the collection
-		const allInvitations = await db
-			.collection("collaboration_invitations")
-			.find({})
-			.toArray();
-		console.log(
-			"📁 All collaboration_invitations:",
-			allInvitations.map((inv) => ({
-				_id: inv._id,
-				questId: inv.questId,
-				status: inv.status,
-				inviteeEmail: inv.inviteeEmail,
-			}))
-		);
-
-		// Try to find the specific invitation
 		let invitation = null;
+		let collectionName = "";
+		let targetCollection = "";
+		let targetId = "";
+		let invitationType = "quest"; // default to quest
 
-		// Method 1: Direct query
-		invitation = await db.collection("collaboration_invitations").findOne({
-			_id: id,
-		} as any);
+		// Check different collections in order
+		const collectionsToCheck = [
+			{ name: "collaboration_invitations", type: "quest" },
+			{ name: "habit_collaboration_invitations", type: "habit" },
+			{ name: "pending_invitations", type: "quest" },
+			{ name: "pending_habit_invitations", type: "habit" },
+		];
 
-		console.log("🔍 Direct query result:", invitation);
-
-		// Method 2: If not found, try manual search (case-insensitive)
-		if (!invitation) {
-			console.log("🔄 Trying manual search...");
-			for (const inv of allInvitations) {
-				const invId = inv._id?.toString();
-				if (invId && invId.toLowerCase() === id.toLowerCase()) {
-					invitation = inv;
-					console.log("✅ Found by case-insensitive match!");
-					break;
-				}
+		for (const { name, type } of collectionsToCheck) {
+			invitation = await db.collection(name).findOne({ _id: id } as any);
+			if (invitation) {
+				collectionName = name;
+				invitationType = type;
+				console.log(`✅ Found invitation in ${name} collection, type: ${type}`);
+				break;
 			}
 		}
 
-		// Method 3: Try pending_invitations
 		if (!invitation) {
-			console.log("🔄 Trying pending_invitations collection...");
-			invitation = await db.collection("pending_invitations").findOne({
-				_id: id,
-			} as any);
-		}
-
-		if (!invitation) {
-			console.error("❌ Invitation not found in database for ID:", id);
-			console.error("❌ Tried ID:", id);
-			console.error(
-				"❌ Available IDs:",
-				allInvitations.map((inv) => inv._id)
-			);
-
+			console.error("❌ Invitation not found in any collection for ID:", id);
 			return NextResponse.json(
 				{
 					error: {
 						message: "Invitation not found or expired",
-						debug: {
-							searchedId: id,
-							availableIds: allInvitations.map((inv) => inv._id?.toString?.()),
-						},
+						details: `Invitation ID: ${id}`,
 					},
 				},
 				{ status: 404 }
@@ -106,56 +71,152 @@ export async function GET(
 
 		console.log("✅ Found invitation:", {
 			id: invitation._id,
-			questId: invitation.questId,
+			type: invitationType,
+			collection: collectionName,
+			targetId: invitation.questId || invitation.habitId,
 			status: invitation.status,
 			inviteeEmail: invitation.inviteeEmail,
 		});
 
-		// Get quest details
-		console.log("🔍 Looking for quest with ID:", invitation.questId);
-		const quest = await db
-			.collection("goals")
-			.findOne({ _id: invitation.questId } as any, {
-				projection: {
-					title: 1,
-					category: 1,
-					description: 1,
-					dueDate: 1,
-				},
-			});
+		// Determine target details based on type
+		if (invitationType === "habit") {
+			targetCollection = "habits";
+			targetId = invitation.habitId;
+		} else {
+			targetCollection = "goals";
+			targetId = invitation.questId;
+		}
 
-		console.log("📋 Quest found:", quest);
+		console.log("🎯 Target details:", {
+			targetCollection,
+			targetId,
+			targetTitle: invitation.questTitle || invitation.habitTitle,
+		});
 
-		// Get inviter details
-		const inviter = await db
-			.collection("users")
-			.findOne({ firebaseUid: invitation.inviterId } as any, {
-				projection: { displayName: 1, photoURL: 1 },
-			});
+		// Get target details (quest or habit)
+		let target = null;
+		if (targetId) {
+			try {
+				target = await db
+					.collection(targetCollection)
+					.findOne({ _id: targetId } as any, {
+						projection: {
+							title: 1,
+							name: 1,
+							category: 1,
+							description: 1,
+							dueDate: 1,
+							userId: 1,
+						},
+					});
+				console.log(
+					`📋 ${invitationType === "habit" ? "Habit" : "Quest"} found:`,
+					target
+				);
+			} catch (error) {
+				console.error(`Error fetching ${targetCollection}:`, error);
+			}
+		}
+
+		// Get inviter details - handle both MongoDB _id and firebaseUid
+		let inviter = null;
+		if (invitation.inviterId) {
+			try {
+				// First try by MongoDB _id
+				if (/^[0-9a-fA-F]{24}$/.test(invitation.inviterId)) {
+					inviter = await db
+						.collection("users")
+						.findOne({ _id: invitation.inviterId } as any, {
+							projection: {
+								displayName: 1,
+								photoURL: 1,
+								email: 1,
+								firebaseUid: 1,
+							},
+						});
+					console.log("✅ Found inviter by MongoDB _id");
+				}
+
+				// If not found, try by firebaseUid
+				if (!inviter) {
+					inviter = await db.collection("users").findOne(
+						{ firebaseUid: invitation.inviterId },
+						{
+							projection: {
+								displayName: 1,
+								photoURL: 1,
+								email: 1,
+								firebaseUid: 1,
+							},
+						}
+					);
+					console.log("✅ Found inviter by firebaseUid");
+				}
+
+				// If still not found, try by email
+				if (!inviter && invitation.inviterEmail) {
+					inviter = await db.collection("users").findOne(
+						{ email: invitation.inviterEmail.toLowerCase().trim() },
+						{
+							projection: {
+								displayName: 1,
+								photoURL: 1,
+								email: 1,
+								firebaseUid: 1,
+							},
+						}
+					);
+					console.log("✅ Found inviter by email");
+				}
+			} catch (error) {
+				console.error("Error fetching inviter:", error);
+			}
+		}
 
 		console.log("👤 Inviter found:", inviter);
 
+		// Prepare response data
+		const targetTitle =
+			target?.title ||
+			target?.name ||
+			invitation.questTitle ||
+			invitation.habitTitle ||
+			"Untitled";
+		const targetDescription = target?.description || "";
+		const targetCategory = target?.category || "General";
+		const targetDueDate = target?.dueDate
+			? new Date(target.dueDate).toLocaleDateString()
+			: null;
+
 		const responseData = {
 			invitationId: invitation._id,
-			questId: invitation.questId,
-			questTitle: quest?.title || invitation.questTitle || "Untitled Quest",
-			questCategory: quest?.category || "General",
-			questDescription: quest?.description || "",
-			questDueDate: quest?.dueDate
-				? new Date(quest.dueDate).toLocaleDateString()
-				: null,
+			invitationType: invitationType,
+			targetId: targetId,
+			targetTitle: targetTitle,
+			targetCategory: targetCategory,
+			targetDescription: targetDescription,
+			targetDueDate: targetDueDate,
 			inviterId: invitation.inviterId,
 			inviterName:
 				inviter?.displayName || invitation.inviterName || "QuestZen User",
-			inviterEmail: invitation.inviterEmail,
+			inviterEmail: inviter?.email || invitation.inviterEmail,
 			inviteeEmail: invitation.inviteeEmail,
 			status: invitation.status || "pending",
 			createdAt: invitation.createdAt,
 			expiresAt: invitation.expiresAt,
 			isExistingUser: !!invitation.inviteeId,
+			hasToken: !!invitation.token, // For new user invitations
 		};
 
-		console.log("📤 Returning response data:", responseData);
+		console.log("📤 Returning response data:", {
+			invitationId: responseData.invitationId,
+			invitationType: responseData.invitationType,
+			targetId: responseData.targetId,
+			targetTitle: responseData.targetTitle,
+			inviterName: responseData.inviterName,
+			inviteeEmail: responseData.inviteeEmail,
+			status: responseData.status,
+		});
 
 		const response = NextResponse.json(responseData);
 
