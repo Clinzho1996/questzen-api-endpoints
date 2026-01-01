@@ -58,9 +58,10 @@ export async function PATCH(
 
 export async function DELETE(
 	request: NextRequest,
-	{ params }: { params: { id: string } }
+	context: { params: Promise<{ id: string }> }
 ) {
 	try {
+		const params = await context.params;
 		console.log("🔵 [API] Deleting notification");
 		console.log("🗑️ Notification ID:", params.id);
 
