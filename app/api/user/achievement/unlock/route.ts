@@ -198,21 +198,76 @@ export async function POST(request: NextRequest) {
 }
 
 // Helper function to get achievement names
+// Helper function to get achievement names
 function getAchievementName(id: string): string {
 	const names: Record<string, string> = {
-		first_quest: "First Quest Complete",
-		quest_master: "Quest Master - 10 Quests",
-		century: "Century - 100 Quests",
-		focus_beginner: "Focus Beginner - 5 Sessions",
-		focus_master: "Focus Master - 50 Sessions",
-		time_lord: "Time Lord - 1000 Minutes",
-		early_bird: "Early Bird",
-		night_owl: "Night Owl",
-		streak_warrior: "7-Day Streak",
-		streak_legend: "30-Day Streak",
-		first_goal_completed: "First Goal Completed",
-		goal_master: "Goal Master",
-		focus_champion: "Focus Champion",
+		// Habit achievements
+		habit_first_complete: "Baby Steps",
+		habit_streak_3: "Getting Started",
+		habit_streak_7: "Week Warrior",
+		habit_streak_14: "Fortnight Fighter",
+		habit_streak_30: "Monthly Master",
+		habit_streak_90: "Quarter Queen",
+		habit_complete_10: "Habit Hero",
+		habit_complete_50: "Habit Champion",
+		habit_complete_100: "Centurion",
+		habit_complete_500: "Legend",
+		habit_daily_3: "Triple Threat",
+		habit_daily_5: "Quintessential",
+		habit_daily_10: "Perfect Ten",
+		habit_morning_routine: "Early Riser",
+		habit_evening_routine: "Night Owl",
+		habit_collaboration: "Team Player",
+
+		// Focus achievements
+		focus_first_session: "Focus Initiate",
+		focus_beginner: "Focus Apprentice",
+		focus_intermediate: "Focus Adept",
+		focus_master: "Focus Master",
+		focus_grandmaster: "Focus Grandmaster",
+		time_minutes_100: "Time Explorer",
+		time_minutes_500: "Time Adventurer",
+		time_minutes_1000: "Time Lord",
+		time_minutes_5000: "Time Master",
+		long_focus_session: "Deep Diver",
+
+		// Streak achievements
+		streak_3: "Consistency Starter",
+		streak_7: "Weekly Warrior",
+		streak_14: "Bi-Weekly Badass",
+		streak_30: "Monthly Maestro",
+		streak_60: "Bi-Monthly Beast",
+		streak_90: "Quarter Queen/King",
+		streak_365: "Yearlong Yogi",
+
+		// Collaboration achievements
+		collaboration_invite: "Social Butterfly",
+		collaboration_accept: "Team Member",
+		collaboration_complete_5: "Power Team",
+		collaboration_complete_20: "Dream Team",
+		multiple_collaborators: "Community Builder",
+
+		// Consistency achievements
+		perfect_week: "Perfect Week",
+		perfect_month: "Perfect Month",
+		consistency_80: "Consistency King",
+		consistency_90: "Consistency Master",
+
+		// Productivity achievements
+		high_productivity_day: "Power Day",
+		productivity_streak_5: "Productivity Pro",
+		balanced_life: "Life Balancer",
+
+		// Special achievements
+		first_of_year: "New Year, New You",
+		birthday_habit: "Birthday Celebration",
+		midnight_habit: "Midnight Oil",
+		dawn_habit: "Early Bird",
+		holiday_habit: "Dedicated",
+		travel_habit: "Road Warrior",
+		sick_day_habit: "Unstoppable",
+		all_habits_day: "Overachiever",
 	};
+
 	return names[id] || "Achievement Unlocked";
 }
