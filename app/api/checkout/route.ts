@@ -11,6 +11,7 @@ function setCORSHeaders(response: NextResponse, origin: string | null) {
 	// Allow both production and localhost origins
 	const allowedOrigins = [
 		"https://questzenai.devclinton.org",
+		"https://questzen.app",
 		"http://localhost:5173",
 		"http://localhost:3000",
 	];
@@ -22,10 +23,7 @@ function setCORSHeaders(response: NextResponse, origin: string | null) {
 		response.headers.set("Access-Control-Allow-Origin", requestOrigin);
 	} else {
 		// Default to production domain if origin not allowed
-		response.headers.set(
-			"Access-Control-Allow-Origin",
-			"https://questzenai.devclinton.org"
-		);
+		response.headers.set("Access-Control-Allow-Origin", "https://questzen.app");
 	}
 
 	response.headers.set(
@@ -68,9 +66,9 @@ export async function POST(request: NextRequest) {
 			line_items: [{ price: priceId, quantity: 1 }],
 			mode: "subscription",
 			success_url: `${
-				origin || "https://questzenai.devclinton.org"
+				origin || "https://questzen.app"
 			}/profile?session_id={CHECKOUT_SESSION_ID}`,
-			cancel_url: `${origin || "https://questzenai.devclinton.org"}/upgrade`,
+			cancel_url: `${origin || "https://questzen.app"}/upgrade`,
 			metadata: {
 				userId: userId,
 				planType: plan,
