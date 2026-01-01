@@ -73,50 +73,6 @@ export async function POST(
 		}
 
 		if (!currentUser) {
-			console.log("🔄 Creating new user...");
-			const newUser = {
-				firebaseUid: user.userId,
-				email: user.email || "",
-				displayName: user.email?.split("@")[0] || "QuestZen User",
-				photoURL: "",
-				subscriptionTier: "free",
-				streak: 0,
-				longestStreak: 0,
-				totalFocusMinutes: 0,
-				level: 1,
-				xp: 0,
-				achievements: [],
-				createdAt: new Date(),
-				updatedAt: new Date(),
-			};
-
-			const result = await db.collection("users").insertOne(newUser);
-			currentUser = {
-				_id: result.insertedId,
-				firebaseUid: newUser.firebaseUid,
-				email: newUser.email,
-				displayName: newUser.displayName,
-				photoURL: "",
-			};
-			console.log("✅ Created new user");
-		}
-
-		// Get ALL possible identifiers for this user
-		const userFirebaseUid = currentUser.firebaseUid || user.userId;
-		const userMongoId = currentUser._id;
-		const userMongoIdString = userMongoId.toString();
-		const userEmail = currentUser.email;
-		const userDisplayName =
-			currentUser.displayName || userEmail?.split("@")[0] || "User";
-
-		console.log("👤 Current user identifiers:", {
-			firebaseUid: userFirebaseUid,
-			mongoId: userMongoIdString,
-			email: userEmail,
-			displayName: userDisplayName,
-		});
-
-		if (!currentUser) {
 			return NextResponse.json(
 				{ error: { message: "User not found" } },
 				{ status: 404 }
@@ -124,18 +80,42 @@ export async function POST(
 		}
 
 		const targetDate = date || new Date().toISOString().split("T")[0];
+		console.log("🎯 Target date for completion:", targetDate);
 
-		const completionResult = await db
+		// Check if habit exists
+		const habit = await db.collection("habits").findOne({
+			_id: new ObjectId(habitId),
+		});
+
+		if (!habit) {
+			console.error("❌ Habit not found:", habitId);
+			return NextResponse.json(
+				{ error: { message: "Habit not found" } },
+				{ status: 404 }
+			);
+		}
+
+		console.log("🔍 Looking for existing completion record...");
+
+		// Try to find existing completion first
+		const existingCompletion = await db
 			.collection("habit_completions")
-			.findOneAndUpdate(
-				{
-					habitId: new ObjectId(habitId),
-					$or: [
-						{ userId: currentUser._id },
-						{ userFirebaseUid: currentUser.firebaseUid },
-					],
-					date: targetDate,
-				},
+			.findOne({
+				habitId: new ObjectId(habitId),
+				$or: [
+					{ userId: currentUser._id },
+					{ userFirebaseUid: currentUser.firebaseUid || user.userId },
+				],
+				date: targetDate,
+			});
+
+		let completion;
+
+		if (existingCompletion) {
+			console.log("📝 Updating existing completion record");
+			// Update existing record
+			const updateResult = await db.collection("habit_completions").updateOne(
+				{ _id: existingCompletion._id },
 				{
 					$set: {
 						completed: true,
@@ -149,41 +129,178 @@ export async function POST(
 					$inc: {
 						count: 1,
 					},
-					$setOnInsert: {
-						createdAt: new Date(),
-						userId: currentUser._id,
-						userFirebaseUid: currentUser.firebaseUid || undefined,
-						habitId: new ObjectId(habitId),
-						date: targetDate,
-					},
-				},
-				{
-					upsert: true,
-					returnDocument: "after",
 				}
 			);
 
-		// Handle null completion
-		if (!completionResult || !completionResult.value) {
-			console.error("Failed to create or update completion record");
+			if (updateResult.modifiedCount > 0) {
+				completion = await db.collection("habit_completions").findOne({
+					_id: existingCompletion._id,
+				});
+			}
+		} else {
+			console.log("✨ Creating new completion record");
+			// Create new record
+			const newCompletion = {
+				habitId: new ObjectId(habitId),
+				userId: currentUser._id,
+				userFirebaseUid: currentUser.firebaseUid || user.userId,
+				userEmail: currentUser.email,
+				userDisplayName: currentUser.displayName,
+				date: targetDate,
+				completed: true,
+				mood: mood || null,
+				productivity: productivity || null,
+				notes: notes || "",
+				timeSpent: timeSpent || 0,
+				count: 1,
+				completedAt: new Date(),
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			};
+
+			const insertResult = await db
+				.collection("habit_completions")
+				.insertOne(newCompletion);
+			completion = { ...newCompletion, _id: insertResult.insertedId };
+		}
+
+		if (!completion) {
+			console.error("❌ Failed to create or update completion record");
 			return NextResponse.json(
 				{ error: { message: "Failed to record habit completion" } },
 				{ status: 500 }
 			);
 		}
 
-		const completion = completionResult.value;
+		console.log("✅ Completion recorded successfully:", {
+			completionId: completion._id,
+			habitId: habitId,
+			date: targetDate,
+		});
 
-		// Then in your response:
+		// Update habit stats
+		console.log("📊 Updating habit stats...");
+		const updateHabitResult = await db.collection("habits").updateOne(
+			{ _id: new ObjectId(habitId) },
+			{
+				$inc: {
+					"stats.totalCompletions": 1,
+					"stats.totalMinutesSpent": timeSpent || 0,
+				},
+				$set: {
+					"stats.updatedAt": new Date(),
+					updatedAt: new Date(),
+				},
+			}
+		);
+
+		console.log("✅ Habit stats updated:", updateHabitResult.modifiedCount > 0);
+
+		// Calculate streak
+		console.log("🔥 Calculating streaks...");
+		const streakData = await db
+			.collection("habit_completions")
+			.aggregate([
+				{
+					$match: {
+						habitId: new ObjectId(habitId),
+						$or: [
+							{ userId: currentUser._id },
+							{ userFirebaseUid: currentUser.firebaseUid || user.userId },
+						],
+						completed: true,
+					},
+				},
+				{
+					$sort: { date: 1 },
+				},
+				{
+					$group: {
+						_id: null,
+						dates: { $push: "$date" },
+					},
+				},
+			])
+			.toArray();
+
+		// Get current streak
+		let currentStreak = 0;
+		if (streakData.length > 0) {
+			const dates = streakData[0].dates;
+			dates.sort((a: string, b: string) => b.localeCompare(a)); // Sort descending
+
+			const today = new Date().toISOString().split("T")[0];
+			const yesterday = new Date(Date.now() - 86400000)
+				.toISOString()
+				.split("T")[0];
+
+			for (let i = 0; i < dates.length; i++) {
+				if (i === 0) {
+					if (dates[i] === today || dates[i] === yesterday) {
+						currentStreak = 1;
+					} else {
+						break;
+					}
+				} else {
+					const prevDate = new Date(dates[i - 1]);
+					const currDate = new Date(dates[i]);
+					const diffDays = Math.floor(
+						(prevDate.getTime() - currDate.getTime()) / (1000 * 60 * 60 * 24)
+					);
+
+					if (diffDays === 1) {
+						currentStreak++;
+					} else {
+						break;
+					}
+				}
+			}
+		}
+
+		// Update streak in habit
+		await db.collection("habits").updateOne(
+			{ _id: new ObjectId(habitId) },
+			{
+				$set: {
+					"stats.currentStreak": currentStreak,
+					"stats.bestStreak": Math.max(
+						currentStreak,
+						habit.stats?.bestStreak || 0
+					),
+				},
+			}
+		);
+
+		// Get updated habit
+		const updatedHabit = await db.collection("habits").findOne(
+			{ _id: new ObjectId(habitId) },
+			{
+				projection: {
+					name: 1,
+					completedToday: 1,
+					progress: 1,
+					stats: 1,
+					settings: 1,
+					isActive: 1,
+				},
+			}
+		);
+
 		return NextResponse.json({
 			success: true,
-			completion: completion, // This is now guaranteed to not be null
+			completion: completion,
 			xpEarned: 10,
+			habit: updatedHabit,
+			currentStreak: currentStreak,
+			message: "Habit completed successfully!",
 		});
 	} catch (error: any) {
-		console.error("Complete habit error:", error);
+		console.error("❌ Complete habit error:", error);
+		console.error("❌ Error stack:", error.stack);
 		return NextResponse.json(
-			{ error: { message: "Failed to complete habit" } },
+			{
+				error: { message: "Failed to complete habit", details: error.message },
+			},
 			{ status: 500 }
 		);
 	}
