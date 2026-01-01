@@ -286,10 +286,21 @@ export async function POST(
 			}
 		);
 
+		const xpEarned = 10; // Base XP for habit completion
+		const xpUpdateResult = await updateUserXP(
+			db,
+			currentUser._id,
+			xpEarned,
+			"habit_completion"
+		);
+
+		console.log("💰 XP Update Result:", xpUpdateResult);
 		return NextResponse.json({
 			success: true,
 			completion: completion,
-			xpEarned: 10,
+			xpEarned: xpEarned,
+			userXP: xpUpdateResult?.xp || 0,
+			userLevel: xpUpdateResult?.level || 1,
 			habit: updatedHabit,
 			currentStreak: currentStreak,
 			message: "Habit completed successfully!",
@@ -304,4 +315,44 @@ export async function POST(
 			{ status: 500 }
 		);
 	}
+}
+
+async function updateUserXP(
+	db: any,
+	userId: ObjectId,
+	xpToAdd: number,
+	action: string
+) {
+	console.log(`💰 Adding ${xpToAdd} XP for ${action}`);
+
+	const result = await db.collection("users").findOneAndUpdate(
+		{ _id: userId },
+		{
+			$inc: { xp: xpToAdd },
+			$set: { updatedAt: new Date() },
+		},
+		{
+			returnDocument: "after",
+			projection: { xp: 1, level: 1 },
+		}
+	);
+
+	if (result.value) {
+		// Check for level up
+		const currentXP = result.value.xp || 0;
+		const currentLevel = result.value.level || 1;
+		const newLevel = Math.floor(currentXP / 1000) + 1;
+
+		if (newLevel > currentLevel) {
+			// Update level
+			await db
+				.collection("users")
+				.updateOne({ _id: userId }, { $set: { level: newLevel } });
+			console.log(`🎉 Level up! From ${currentLevel} to ${newLevel}`);
+		}
+
+		return { xp: currentXP, level: newLevel };
+	}
+
+	return null;
 }
