@@ -157,6 +157,16 @@ export async function POST(request: NextRequest) {
 		const newCompletedGoals = currentCompletedGoals + completedChange;
 		const newLevel = Math.floor(newXP / 1000) + 1;
 
+		console.log("🔢 Level calculation:", {
+			currentXP: currentXP,
+			currentLevel: currentLevel,
+			xpChange: xpChange,
+			newXP: newXP,
+			calculatedLevel: newLevel,
+			formula: `Math.floor(${newXP} / 1000) + 1 = ${
+				Math.floor(newXP / 1000) + 1
+			}`,
+		});
 		// Prepare update data
 		const updateData: any = {
 			updatedAt: new Date(),
@@ -165,6 +175,13 @@ export async function POST(request: NextRequest) {
 			level: newLevel,
 		};
 
+		// Check if level should change
+		const shouldLevelUp = newLevel > currentLevel;
+		console.log("🎯 Level up check:", {
+			shouldLevelUp: shouldLevelUp,
+			newLevel: newLevel,
+			currentLevel: currentLevel,
+		});
 		// Add optional fields if provided
 		if (focusSessionsChange !== 0) {
 			updateData.focusSessions =
