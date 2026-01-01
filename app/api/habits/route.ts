@@ -5,6 +5,7 @@ import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET all habits (both user's and predefined)
+
 export async function GET(request: NextRequest) {
 	try {
 		const user = await requireAuth(request);
@@ -70,15 +71,38 @@ export async function GET(request: NextRequest) {
 			);
 		}
 
-		// Get user's habits
-		const userHabits = await db
+		const currentUserId = currentUser._id;
+		const currentUserIdString = currentUserId.toString();
+
+		console.log("🔍 Fetching habits for user:", {
+			userId: currentUserIdString,
+			email: currentUser.email,
+		});
+
+		// Get user's OWN habits (where they are the owner)
+		const ownHabits = await db
 			.collection("habits")
 			.find({
-				userId: currentUser._id,
+				userId: currentUserId,
 				isPredefined: false,
 			})
 			.sort({ createdAt: -1 })
 			.toArray();
+
+		// Get COLLABORATIVE habits (where user is a collaborator)
+		const collaborativeHabits = await db
+			.collection("habits")
+			.find({
+				isCollaborative: true,
+				"collaborators.userId": currentUserIdString,
+			})
+			.sort({ createdAt: -1 })
+			.toArray();
+
+		console.log("📊 Habit counts:", {
+			ownHabits: ownHabits.length,
+			collaborativeHabits: collaborativeHabits.length,
+		});
 
 		// Get predefined habits
 		const predefinedHabits = await db
@@ -88,8 +112,20 @@ export async function GET(request: NextRequest) {
 			})
 			.toArray();
 
+		// Combine own and collaborative habits
+		const allUserHabits = [...ownHabits, ...collaborativeHabits];
+
+		// Remove duplicates (in case a habit appears in both lists)
+		const uniqueHabits = allUserHabits.filter(
+			(habit, index, self) =>
+				index ===
+				self.findIndex((h) => h._id.toString() === habit._id.toString())
+		);
+
+		console.log("📈 Total unique habits:", uniqueHabits.length);
+
 		// Check which predefined habits user has already added
-		const userHabitNames = userHabits.map((h) => h.name);
+		const userHabitNames = uniqueHabits.map((h) => h.name);
 		const availableHabits = predefinedHabits.filter(
 			(habit) => !userHabitNames.includes(habit.name)
 		);
@@ -98,7 +134,7 @@ export async function GET(request: NextRequest) {
 		const today = new Date().toISOString().split("T")[0];
 
 		// Get completions for all user habits
-		const habitIds = userHabits.map((h) => h._id);
+		const habitIds = uniqueHabits.map((h) => h._id);
 		let todayCompletions: any[] = [];
 
 		if (habitIds.length > 0) {
@@ -107,7 +143,7 @@ export async function GET(request: NextRequest) {
 				.find({
 					habitId: { $in: habitIds },
 					date: today,
-					userId: currentUser._id,
+					userId: currentUserId,
 				})
 				.toArray();
 		}
@@ -119,19 +155,44 @@ export async function GET(request: NextRequest) {
 				.map((c) => c.habitId.toString())
 		);
 
-		const transformedUserHabits = userHabits.map((habit) => {
+		// Transform user habits
+		const transformedUserHabits = uniqueHabits.map((habit) => {
 			const isCompletedToday = completedHabitIds.has(habit._id.toString());
 
-			// ADD DEBUG LOG
-			console.log(`🔍 Habit DB values for ${habit.name}:`, {
-				dbIsCollaborative: habit.isCollaborative,
-				type: typeof habit.isCollaborative,
-				dbCollaborators: habit.collaborators,
-				dbParticipants: habit.participants,
-				dbRole: habit.role,
+			// Determine user's role in this habit
+			let userRole = "owner";
+			let isCollaborator = false;
+
+			// Check if user is the owner
+			if (habit.userId && habit.userId.toString() === currentUserIdString) {
+				userRole = "owner";
+			}
+			// Check if user is a collaborator
+			else if (habit.collaborators && Array.isArray(habit.collaborators)) {
+				const userCollaborator = habit.collaborators.find(
+					(c: any) => c.userId === currentUserIdString
+				);
+				if (userCollaborator) {
+					userRole = userCollaborator.role || "collaborator";
+					isCollaborator = true;
+				}
+			}
+
+			// Get participant info
+			const participant = habit.participants?.find(
+				(p: any) => p.userId === currentUserIdString
+			);
+
+			console.log(`🔍 Transforming habit ${habit.name}:`, {
+				habitId: habit._id.toString(),
+				userId: habit.userId?.toString(),
+				currentUserId: currentUserIdString,
+				userRole,
+				isCollaborator,
+				participant: !!participant,
+				collaboratorsCount: habit.collaborators?.length || 0,
 			});
 
-			const userRole = "owner";
 			return {
 				id: habit._id.toString(),
 				name: habit.name,
@@ -161,13 +222,26 @@ export async function GET(request: NextRequest) {
 				tags: habit.tags || [],
 				isPredefined: false,
 				isFromPredefined: habit.isFromPredefined || false,
-				// FIX THESE LINES - Use the ACTUAL values from database
-				isCollaborative: habit.isCollaborative, // NOT habit.isCollaborative === true
+				// COLLABORATIVE PROPERTIES
+				isCollaborative: habit.isCollaborative || false,
+				isOwner: userRole === "owner",
 				role: userRole,
 				collaborators: habit.collaborators || [],
 				participants: habit.participants || [],
+				ownerId: habit.userId?.toString(),
+				ownerInfo: habit.ownerInfo || null,
+				// If collaborator, include invitation info
+				invitationInfo: isCollaborator
+					? {
+							inviterId: habit.inviterId,
+							inviterName: habit.inviterName,
+							inviterEmail: habit.inviterEmail,
+							joinedAt: participant?.joinedAt || habit.createdAt,
+					  }
+					: null,
 			};
 		});
+
 		// Transform available habits (predefined)
 		const transformedAvailableHabits = availableHabits.map((habit) => ({
 			id: habit._id.toString(),
@@ -192,10 +266,16 @@ export async function GET(request: NextRequest) {
 		const response = {
 			userHabits: transformedUserHabits,
 			availableHabits: transformedAvailableHabits,
+			summary: {
+				totalHabits: transformedUserHabits.length,
+				ownHabits: ownHabits.length,
+				collaborativeHabits: collaborativeHabits.length,
+				isCollaboratorIn: collaborativeHabits.length,
+			},
 		};
 
 		console.log(
-			`✅ Returned ${transformedUserHabits.length} user habits with collaborative properties`
+			`✅ Returned ${transformedUserHabits.length} user habits (${ownHabits.length} own, ${collaborativeHabits.length} collaborative)`
 		);
 
 		return NextResponse.json(response);
