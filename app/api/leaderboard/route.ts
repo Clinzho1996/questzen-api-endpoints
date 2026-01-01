@@ -3,14 +3,14 @@ import { requireAuth } from "@/lib/auth";
 import { getDatabase } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-interface UnifiedUser {
+interface LeaderboardUser {
 	id: string;
 	userId: string;
 	name: string;
 	avatar: string;
 	xp: number;
 	level: number;
-	completedGoals: number;
+	completedHabits: number; // Changed from completedGoals
 	source: "firebase" | "mongodb";
 	email?: string;
 	displayName?: string;
@@ -19,17 +19,17 @@ interface UnifiedUser {
 }
 
 interface UserDocument {
-	_id: any;
+	_id?: any;
 	firebaseUid?: string;
 	email?: string;
 	displayName?: string;
 	photoURL?: string;
 	xp?: number;
 	level?: number;
-	completedGoals?: number;
+	completedHabits?: number; // Updated field name
+	completedGoals?: number; // Keep for backward compatibility
 	provider?: string;
 	password?: string;
-	// XP history for time filtering
 	xpHistory?: Array<{
 		date: Date;
 		amount: number;
@@ -37,6 +37,7 @@ interface UserDocument {
 	}>;
 	createdAt?: Date;
 	updatedAt?: Date;
+	lastActiveDate?: Date; // Added for activity-based filtering
 }
 
 export async function GET(request: NextRequest) {
@@ -49,25 +50,49 @@ export async function GET(request: NextRequest) {
 
 		console.log("📊 Fetching unified leaderboard, filter:", filter);
 
-		// Get date ranges based on filter
+		// Get date range based on filter
 		const dateRange = getDateRange(filter);
+		console.log("📅 Date range for filter:", {
+			filter,
+			start: dateRange.start?.toISOString(),
+			end: dateRange.end?.toISOString(),
+		});
 
-		// Fetch MongoDB users with their XP history
+		// Fetch MongoDB users with necessary fields
 		const mongoUsers = await db
 			.collection("users")
 			.find({})
 			.sort({ xp: -1 })
-			.limit(100) // Fetch more for filtering
+			.limit(100)
+			.project({
+				_id: 1,
+				email: 1,
+				displayName: 1,
+				photoURL: 1,
+				firebaseUid: 1,
+				xp: 1,
+				level: 1,
+				completedHabits: 1,
+				completedGoals: 1,
+				provider: 1,
+				password: 1,
+				xpHistory: 1,
+				createdAt: 1,
+				updatedAt: 1,
+				lastActiveDate: 1,
+			})
 			.toArray();
 
-		// Transform users and calculate XP for the time period
-		const transformedMongoUsers: UnifiedUser[] = mongoUsers
+		console.log(`📦 Found ${mongoUsers.length} MongoDB users`);
+
+		// Transform users with time filtering
+		const transformedMongoUsers: LeaderboardUser[] = mongoUsers
 			.map((userDoc: UserDocument) => {
-				// Calculate XP for the time period
+				// Calculate XP for the selected time period
 				const xpForPeriod = calculateXPForPeriod(userDoc, dateRange);
 
-				// Skip users with 0 XP for the period
-				if (xpForPeriod === 0 && filter !== "allTime") {
+				// For non-allTime filters, skip users with 0 XP in period
+				if (filter !== "allTime" && xpForPeriod === 0) {
 					return null;
 				}
 
@@ -76,10 +101,16 @@ export async function GET(request: NextRequest) {
 				if (userDoc.provider) {
 					provider = userDoc.provider;
 				} else if (userDoc.firebaseUid) {
-					provider = "google"; // Firebase users from Google
+					provider = "firebase";
 				} else if (userDoc.password) {
-					provider = "email"; // Has password = email signup
+					provider = "email";
 				}
+
+				// Use completedHabits if available, fallback to completedGoals
+				const completedHabits =
+					userDoc.completedHabits !== undefined
+						? userDoc.completedHabits
+						: userDoc.completedGoals || 0;
 
 				return {
 					id: userDoc._id.toString(),
@@ -91,7 +122,7 @@ export async function GET(request: NextRequest) {
 						`https://api.dicebear.com/7.x/avataaars/svg?seed=${userDoc._id}`,
 					xp: filter === "allTime" ? userDoc.xp || 0 : xpForPeriod,
 					level: userDoc.level || 1,
-					completedGoals: userDoc.completedGoals || 0,
+					completedHabits,
 					source: "mongodb" as const,
 					email: userDoc.email,
 					displayName: userDoc.displayName,
@@ -99,24 +130,43 @@ export async function GET(request: NextRequest) {
 					provider: provider,
 				};
 			})
-			.filter(Boolean) as UnifiedUser[];
+			.filter(Boolean) as LeaderboardUser[];
 
-		// Remove duplicates by email + provider
+		console.log(
+			`✅ ${transformedMongoUsers.length} users after time filtering`
+		);
+
+		// Remove duplicates
 		const uniqueUsers = removeDuplicates(transformedMongoUsers);
+		console.log(`🔍 After deduplication: ${uniqueUsers.length} users`);
 
 		// Sort by XP (for the selected period)
 		const sortedUsers = uniqueUsers.sort((a, b) => b.xp - a.xp);
+		const topUsers = sortedUsers.slice(0, 50);
 
 		console.log(
-			`✅ Returning ${sortedUsers.length} users for ${filter} period`
+			`🏆 Returning top ${topUsers.length} users for ${filter} period`
 		);
+
+		// Log top 3 for debugging
+		if (topUsers.length > 0) {
+			console.log("Top 3 users:");
+			topUsers.slice(0, 3).forEach((user, index) => {
+				console.log(
+					`${index + 1}. ${user.name}: ${user.xp} XP (${user.email})`
+				);
+			});
+		}
 
 		return NextResponse.json({
 			success: true,
-			leaderboard: sortedUsers.slice(0, 50), // Return top 50
-			count: sortedUsers.length,
+			leaderboard: topUsers,
+			count: topUsers.length,
 			filter,
-			dateRange,
+			dateRange: {
+				start: dateRange.start?.toISOString(),
+				end: dateRange.end?.toISOString(),
+			},
 		});
 	} catch (error: any) {
 		console.error("❌ Leaderboard error:", error);
@@ -140,7 +190,7 @@ export async function GET(request: NextRequest) {
 	}
 }
 
-// Helper function to get date range based on filter
+// Helper function to get date range
 function getDateRange(filter: string): {
 	start: Date | null;
 	end: Date | null;
@@ -149,20 +199,20 @@ function getDateRange(filter: string): {
 
 	switch (filter) {
 		case "week":
-			// Start of week (Monday)
-			const startOfWeek = new Date(now);
-			startOfWeek.setDate(now.getDate() - now.getDay() + 1); // Monday
-			startOfWeek.setHours(0, 0, 0, 0);
-			return { start: startOfWeek, end: now };
+			// Last 7 days
+			const weekAgo = new Date(now);
+			weekAgo.setDate(now.getDate() - 7);
+			return { start: weekAgo, end: now };
 
 		case "month":
-			// Start of month
-			const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-			return { start: startOfMonth, end: now };
+			// Last 30 days
+			const monthAgo = new Date(now);
+			monthAgo.setDate(now.getDate() - 30);
+			return { start: monthAgo, end: now };
 
 		case "allTime":
 		default:
-			return { start: null, end: null }; // No time restriction
+			return { start: null, end: null };
 	}
 }
 
@@ -176,7 +226,7 @@ function calculateXPForPeriod(
 		return userDoc.xp || 0;
 	}
 
-	// If user has XP history, calculate from it
+	// Option 1: Use XP history if available
 	if (userDoc.xpHistory && Array.isArray(userDoc.xpHistory)) {
 		const xpInPeriod = userDoc.xpHistory
 			.filter((entry) => {
@@ -188,25 +238,40 @@ function calculateXPForPeriod(
 		return xpInPeriod;
 	}
 
-	// If no XP history, estimate based on user creation/update time
-	// This is a fallback - you should implement XP history tracking
-	if (userDoc.createdAt) {
-		const createdAt = new Date(userDoc.createdAt);
-		if (createdAt >= dateRange.start! && createdAt <= dateRange.end!) {
-			// User created in this period, return their total XP
+	// Option 2: Use lastActiveDate if available
+	if (userDoc.lastActiveDate) {
+		const lastActive = new Date(userDoc.lastActiveDate);
+		if (lastActive >= dateRange.start! && lastActive <= dateRange.end!) {
+			// User was active in this period, return their total XP
+			// Note: This overestimates but works for MVP
 			return userDoc.xp || 0;
 		}
 	}
 
-	// User exists but no activity in this period
+	// Option 3: Use updatedAt timestamp
+	if (userDoc.updatedAt) {
+		const updatedAt = new Date(userDoc.updatedAt);
+		if (updatedAt >= dateRange.start! && updatedAt <= dateRange.end!) {
+			return userDoc.xp || 0;
+		}
+	}
+
+	// Option 4: Use createdAt timestamp (for new users)
+	if (userDoc.createdAt) {
+		const createdAt = new Date(userDoc.createdAt);
+		if (createdAt >= dateRange.start! && createdAt <= dateRange.end!) {
+			return userDoc.xp || 0;
+		}
+	}
+
+	// User hasn't been active in this period
 	return 0;
 }
 
-function removeDuplicates(users: UnifiedUser[]): UnifiedUser[] {
-	const seen = new Map<string, UnifiedUser>();
+function removeDuplicates(users: LeaderboardUser[]): LeaderboardUser[] {
+	const seen = new Map<string, LeaderboardUser>();
 
 	users.forEach((user) => {
-		// Use email + provider as unique key
 		const email = user.email?.toLowerCase().trim();
 		const provider = user.provider || "unknown";
 
@@ -232,8 +297,6 @@ function removeDuplicates(users: UnifiedUser[]): UnifiedUser[] {
 			}
 		}
 	});
-
-	console.log(`🔍 Deduplication: ${users.length} → ${seen.size} users`);
 
 	return Array.from(seen.values());
 }
