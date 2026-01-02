@@ -30,7 +30,7 @@ export async function sendHabitReminderEmail(
 ) {
 	try {
 		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-		const habitUrl = `${frontendUrl}/habits/${habitData.habitId}`;
+		const habitUrl = `${frontendUrl}/habits`;
 
 		// Format due time if provided
 		let dueTimeText = "";
@@ -133,6 +133,7 @@ export async function sendHabitReminderEmail(
             margin: 25px 0;
           }
           .stat-card {
+          margin-top:6px;
             background: white;
             border-radius: 8px;
             padding: 15px;
