@@ -38,9 +38,15 @@ export async function GET(request: NextRequest) {
 
 		const db = await getDatabase();
 
-		// Get plan from metadata
+		// Get plan and subscription code from metadata
 		const plan = verification.data.metadata?.plan || "monthly";
 		const subscriptionTier = "premium";
+
+		// Extract subscription code from the response
+		// This is the key fix - get subscription code for recurring payments
+		const subscriptionCode =
+			verification.data.authorization?.subscription_code ||
+			verification.data.subscription?.subscription_code;
 
 		// Update user subscription
 		await db.collection("users").updateOne(
@@ -52,7 +58,14 @@ export async function GET(request: NextRequest) {
 					lastPaymentDate: new Date(),
 					plan,
 					paystackSubscriptionId: verification.data.id,
+					paystackSubscriptionCode: subscriptionCode, // Store subscription code!
+					paystackTransactionReference: reference,
 					updatedAt: new Date(),
+				},
+				// Set subscription start date if not already set
+				$setOnInsert: {
+					premiumSince: new Date(),
+					subscriptionStartDate: new Date(),
 				},
 			}
 		);
@@ -66,6 +79,8 @@ export async function GET(request: NextRequest) {
 				plan,
 				subscriptionTier,
 				reference: verification.data.reference,
+				subscriptionCode: subscriptionCode,
+				isSubscription: !!subscriptionCode,
 			},
 		});
 	} catch (error: any) {

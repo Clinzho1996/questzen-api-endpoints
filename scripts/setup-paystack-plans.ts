@@ -20,7 +20,7 @@ async function createPlans() {
 
 		const monthlyPlan = await paystack.plan.create({
 			name: "Premium Monthly",
-			amount: 200000,
+			amount: 250000,
 			interval: "monthly",
 			currency: "NGN",
 			description: "Monthly premium subscription for QuestZen AI",
@@ -36,7 +36,7 @@ async function createPlans() {
 		// FIXED: Changed "yearly" to "annually"
 		const yearlyPlan = await paystack.plan.create({
 			name: "Premium Yearly",
-			amount: 2100000,
+			amount: 2800000,
 			interval: "annually", // Paystack uses "annually", not "yearly"
 			currency: "NGN",
 			description: "Yearly premium subscription for QuestZen AI",
