@@ -2,8 +2,8 @@ import { sendHabitReminderEmail } from "@/lib/habitReminder";
 import { getDatabase } from "@/lib/mongodb";
 import { NextResponse } from "next/server";
 
-export const dynamic = "force-dynamic"; // Important for Vercel
-export const maxDuration = 10; // 10 second timeout
+export const dynamic = "force-dynamic";
+export const maxDuration = 10;
 
 export async function GET(request: Request) {
 	const startTime = Date.now();
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 	console.log(`🚀 Cron Job ${jobId} started at ${new Date().toISOString()}`);
 
 	try {
-		// Security check - accept both header and query param
+		// Security check
 		const url = new URL(request.url);
 		const authHeader = request.headers.get("authorization");
 		const queryToken = url.searchParams.get("token");
@@ -43,28 +43,12 @@ export async function GET(request: Request) {
 			`⏰ ${jobId}: Processing for hour ${currentHour}, date ${today}`
 		);
 
-		// 1. Find habits that need reminders
+		// 1. Find all habits with reminders enabled
 		const habits = await db
 			.collection("habits")
 			.find({
 				isActive: true,
 				"settings.reminders.enabled": true,
-				$or: [
-					{ "settings.timeOfDay": "any" },
-					{
-						"settings.timeOfDay": "morning",
-						$where: "this.currentHour >= 6 && this.currentHour < 12",
-					},
-					{
-						"settings.timeOfDay": "afternoon",
-						$where: "this.currentHour >= 12 && this.currentHour < 18",
-					},
-					{
-						"settings.timeOfDay": "evening",
-						$where: "this.currentHour >= 18 && this.currentHour < 22",
-					},
-					{ "settings.timeOfDay": currentHour.toString() + ":00" },
-				],
 			})
 			.toArray();
 
@@ -72,25 +56,55 @@ export async function GET(request: Request) {
 			`📊 ${jobId}: Found ${habits.length} habits with reminders enabled`
 		);
 
-		if (habits.length === 0) {
+		// 2. Filter habits based on timeOfDay settings
+		const filteredHabits = habits.filter((habit) => {
+			const timeOfDay = habit.settings?.timeOfDay;
+
+			// If no timeOfDay setting or "any", include it
+			if (!timeOfDay || timeOfDay.length === 0 || timeOfDay === "any") {
+				return true;
+			}
+
+			// Handle both array and string formats
+			const timeArray = Array.isArray(timeOfDay) ? timeOfDay : [timeOfDay];
+
+			for (const time of timeArray) {
+				if (time === "any") return true;
+				if (time === "morning" && currentHour >= 6 && currentHour < 12)
+					return true;
+				if (time === "afternoon" && currentHour >= 12 && currentHour < 18)
+					return true;
+				if (time === "evening" && currentHour >= 18 && currentHour < 22)
+					return true;
+				if (time === `${currentHour}:00`) return true;
+			}
+
+			return false;
+		});
+
+		console.log(
+			`⏰ ${jobId}: After time filtering: ${filteredHabits.length} habits need reminders now`
+		);
+
+		if (filteredHabits.length === 0) {
 			return NextResponse.json({
 				success: true,
 				jobId,
 				message: "No habits need reminders right now",
-				habitsChecked: 0,
+				habitsChecked: habits.length,
+				filteredHabits: 0,
 				emailsSent: 0,
 				executionTime: `${Date.now() - startTime}ms`,
 				timestamp: now.toISOString(),
 			});
 		}
 
-		// 2. Process habits in batches
+		// 3. Process FILTERED habits in batches
 		let emailsSent = 0;
 		const failedHabits: string[] = [];
 
-		for (let i = 0; i < habits.length; i += 5) {
-			// Small batches to avoid timeout
-			const batch = habits.slice(i, i + 5);
+		for (let i = 0; i < filteredHabits.length; i += 5) {
+			const batch = filteredHabits.slice(i, i + 5);
 
 			await Promise.all(
 				batch.map(async (habit) => {
@@ -177,10 +191,11 @@ export async function GET(request: Request) {
 			jobId,
 			executionTime: `${executionTime}ms`,
 			habitsChecked: habits.length,
+			filteredHabits: filteredHabits.length,
 			emailsSent: emailsSent,
 			failed: failedHabits.length,
 			failedDetails: failedHabits.length > 0 ? failedHabits : undefined,
-			nextRun: new Date(Date.now() + 3600000).toISOString(), // Next hour
+			nextRun: new Date(Date.now() + 3600000).toISOString(),
 			timestamp: now.toISOString(),
 		});
 	} catch (error: any) {
