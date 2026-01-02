@@ -98,14 +98,6 @@ export async function DELETE(request: NextRequest) {
 		try {
 			const body = await request.json();
 			reason = body.reason || "User initiated";
-
-			// Optional: Add confirmation check
-			// if (body.confirmation !== "DELETE") {
-			// 	return NextResponse.json(
-			// 		{ error: { message: "Confirmation required" } },
-			// 		{ status: 400 }
-			// 	);
-			// }
 		} catch (error) {
 			// No body provided, use default reason
 			console.log("No deletion reason provided, using default");
@@ -177,12 +169,11 @@ export async function DELETE(request: NextRequest) {
 			// Continue with deletion even if archiving fails
 		}
 
-		// Define deletion tasks
-		// 3. Delete related data (cascade delete)
+		// Define deletion tasks for related data
 		const userIdObj = user._id;
 		const userEmail = user.email;
 
-		// Define deletion tasks
+		// Define deletion tasks for related data
 		const deletionTasks = [
 			// Delete user's goals/quests
 			() => db.collection("goals").deleteMany({ userId: userIdObj }),
@@ -192,14 +183,12 @@ export async function DELETE(request: NextRequest) {
 
 			// Remove user from collaborations using $pull
 			() =>
-				// Remove user from collaborations with proper typing
-				() =>
-					db
-						.collection("collaborations")
-						.updateMany(
-							{ "collaborators.userId": userIdObj },
-							{ $pull: { collaborators: { userId: userIdObj } } as any }
-						),
+				db
+					.collection("collaborations")
+					.updateMany(
+						{ "collaborators.userId": userIdObj },
+						{ $pull: { collaborators: { userId: userIdObj } } as any }
+					),
 
 			// Delete collaborations owned by user
 			() => db.collection("collaborations").deleteMany({ userId: userIdObj }),
@@ -231,22 +220,63 @@ export async function DELETE(request: NextRequest) {
 			}
 		}
 
-		// 4. Delete user record
-		const result = await db.collection("users").deleteOne({
-			_id: userIdObj,
-		});
+		// ========== CRITICAL CHANGE HERE ==========
+		// 3. SOFT DELETE: Mark user as deleted instead of deleting
+		const now = new Date();
+		const anonymizedEmail = `deleted_${Date.now()}@deleted.questzen.app`;
 
-		if (result.deletedCount === 0) {
-			console.error(`❌ Failed to delete user record: ${user.email}`);
+		const result = await db.collection("users").updateOne(
+			{ _id: userIdObj },
+			{
+				$set: {
+					deletedAt: now,
+					isDeleted: true,
+					// Anonymize personal data
+					email: anonymizedEmail,
+					displayName: "Deleted User",
+					photoURL: null,
+					firebaseUid: `deleted_${Date.now()}_${user._id.toString()}`,
+					subscriptionStatus: "deleted",
+					subscriptionTier: "free",
+
+					// Clear sensitive subscription data
+					paystackCustomerCode: null,
+					paystackSubscriptionCode: null,
+					paystackSubscriptionId: null,
+					stripeCustomerId: null,
+					stripeSubscriptionId: null,
+
+					// Clear personal data
+					phone: null,
+					bio: null,
+					location: null,
+
+					// Update timestamps
+					updatedAt: now,
+				},
+				$unset: {
+					subscriptionDetails: "",
+					recoveryCodes: "",
+					twoFactorSecret: "",
+					passwordResetToken: "",
+					passwordResetExpires: "",
+					emailVerificationToken: "",
+					emailVerificationExpires: "",
+				},
+			}
+		);
+
+		if (result.modifiedCount === 0) {
+			console.error(`❌ Failed to mark user as deleted: ${user.email}`);
 			return NextResponse.json(
 				{ error: { message: "Failed to delete user account" } },
 				{ status: 500 }
 			);
 		}
 
-		console.log(`✅ User record deleted: ${user.email}`);
+		console.log(`✅ User marked as deleted: ${user.email}`);
 
-		// 5. Invalidate all tokens for this user
+		// 4. Invalidate all tokens for this user
 		try {
 			await db.collection("invalidated_tokens").insertOne({
 				token: token,
@@ -266,7 +296,7 @@ export async function DELETE(request: NextRequest) {
 			console.error("Failed to invalidate tokens:", tokenError);
 		}
 
-		// 6. Send confirmation email to user
+		// 5. Send confirmation email to user
 		try {
 			await sendAccountDeletionEmail(userEmail, user.displayName);
 			console.log(`📧 Deletion confirmation sent to: ${user.email}`);
@@ -274,7 +304,7 @@ export async function DELETE(request: NextRequest) {
 			console.error("Failed to send deletion email:", emailError);
 		}
 
-		// 7. Send admin notification
+		// 6. Send admin notification
 		try {
 			await sendAdminDeletionNotification(
 				userEmail,
@@ -287,7 +317,7 @@ export async function DELETE(request: NextRequest) {
 			console.error("Failed to send admin notification:", adminError);
 		}
 
-		// 8. Log the deletion
+		// 7. Log the deletion
 		await db.collection("audit_logs").insertOne({
 			action: "account_deletion",
 			userId: userIdObj,
@@ -298,6 +328,7 @@ export async function DELETE(request: NextRequest) {
 				subscriptionTier: user.subscriptionTier,
 				hadPaystackAccount: !!user.paystackCustomerCode,
 				dataArchived: true,
+				softDelete: true, // Mark as soft delete
 			},
 		});
 
@@ -312,7 +343,8 @@ export async function DELETE(request: NextRequest) {
 				recoveryPeriod: 30, // days
 				supportEmail: process.env.SUPPORT_EMAIL || "support@questzen.app",
 				deletionTime: new Date().toISOString(),
-				note: "All your data has been permanently deleted. You have 30 days to contact support if this was a mistake.",
+				note: "Your account has been marked as deleted. You have 30 days to contact support if this was a mistake.",
+				softDelete: true, // Inform frontend it's a soft delete
 			},
 			{ status: 200 }
 		);
@@ -345,6 +377,62 @@ export async function DELETE(request: NextRequest) {
 	}
 }
 
+// Add a recovery endpoint (optional but recommended)
+export async function POST(request: NextRequest) {
+	try {
+		const body = await request.json();
+		const { email, reason } = body;
+
+		if (!email) {
+			return NextResponse.json(
+				{ error: { message: "Email is required" } },
+				{ status: 400 }
+			);
+		}
+
+		const db = await getDatabase();
+
+		// Check if user exists and is marked as deleted
+		const user = await db.collection("users").findOne({
+			email: { $regex: new RegExp(`^deleted_.*@deleted\\.questzen\\.app$`) },
+			isDeleted: true,
+			// Find by original email in archive
+		});
+
+		if (!user) {
+			return NextResponse.json(
+				{ error: { message: "No deleted account found for this email" } },
+				{ status: 404 }
+			);
+		}
+
+		// Check recovery deadline
+		const recoveryDeadline = new Date(
+			user.deletedAt.getTime() + 30 * 24 * 60 * 60 * 1000
+		);
+		if (new Date() > recoveryDeadline) {
+			return NextResponse.json(
+				{ error: { message: "Recovery period has expired (30 days)" } },
+				{ status: 410 }
+			);
+		}
+
+		// TODO: Send recovery email with verification
+		// This would typically send an email with a recovery link
+
+		return NextResponse.json({
+			message: "Recovery request received. Check your email for instructions.",
+			recoveryDeadline: recoveryDeadline.toISOString(),
+		});
+	} catch (error) {
+		console.error("Recovery request error:", error);
+		return NextResponse.json(
+			{ error: { message: "Failed to process recovery request" } },
+			{ status: 500 }
+		);
+	}
+}
+
 // Optional: Add a GET endpoint to check deletion status
 export async function GET(request: NextRequest) {
 	return NextResponse.json(
@@ -357,6 +445,7 @@ export async function GET(request: NextRequest) {
 				reason: "string (optional)",
 				confirmation: "DELETE (optional)",
 			},
+			note: "This endpoint performs a soft delete (marks user as deleted) to allow recovery within 30 days.",
 		},
 		{ status: 200 }
 	);
