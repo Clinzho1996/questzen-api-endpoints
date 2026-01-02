@@ -152,7 +152,7 @@ export async function GET(request: NextRequest) {
 				nextPaymentDate:
 					userData.nextBillingDate?.toISOString() ??
 					calculateNextPaymentDate(startDate),
-				amount: 2000,
+				amount: 2500,
 				currency: "NGN",
 				interval: "monthly",
 				startDate: startDate.toISOString(),
