@@ -12,14 +12,19 @@ export interface User {
 	firebaseUid?: string; // Firebase user ID
 	provider?: "email" | "google" | "firebase"; // Auth provider
 	subscriptionTier: "free" | "premium";
-	subscriptionStatus: "active" | "cancelled" | "expired" | "inactive";
+	subscriptionStatus:
+		| "active"
+		| "cancelled"
+		| "expired"
+		| "inactive"
+		| "deleted";
 
 	stripeCustomerId?: string;
 	stripeSubscriptionId?: string;
 	subscriptionDetails?: {
 		planCode: string;
 		planName: string;
-		status: "active" | "cancelled" | "expired" | "inactive";
+		status: "active" | "cancelled" | "expired" | "inactive" | undefined;
 		nextPaymentDate?: string;
 		amount: number;
 		currency: string;
@@ -59,6 +64,8 @@ export interface User {
 	// Timestamps
 	createdAt: Date;
 	updatedAt: Date;
+	deletedAt?: Date | null;
+	isDeleted?: boolean;
 }
 
 export function updateStreak(user: User): User {

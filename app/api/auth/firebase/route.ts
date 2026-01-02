@@ -102,6 +102,34 @@ export async function POST(request: NextRequest) {
 			}
 		}
 
+		// ✅ IMPORTANT: Check if user is deleted
+		if (user?.deletedAt) {
+			console.log("❌ User is deleted, preventing login:", user.email);
+			return NextResponse.json(
+				{
+					error: {
+						message: "Account has been deleted",
+						code: "ACCOUNT_DELETED",
+					},
+				},
+				{ status: 410 } // 410 Gone - User deleted
+			);
+		}
+
+		// ✅ Check if user is marked as inactive
+		if (user?.subscriptionStatus === "deleted" || user?.isDeleted) {
+			console.log("❌ User is marked as deleted:", user.email);
+			return NextResponse.json(
+				{
+					error: {
+						message: "Account has been deleted",
+						code: "ACCOUNT_DELETED",
+					},
+				},
+				{ status: 410 }
+			);
+		}
+
 		let isNewUser = false;
 
 		// Create new user if doesn't exist
@@ -139,6 +167,8 @@ export async function POST(request: NextRequest) {
 				subscriptionStatus: "inactive",
 				createdAt: now,
 				updatedAt: now,
+				deletedAt: null, // Make sure this field exists
+				isDeleted: false, // Add this field
 			};
 
 			const result = await usersCollection.insertOne(newUser);
@@ -193,6 +223,8 @@ export async function POST(request: NextRequest) {
 			focusSessions: user.focusSessions || 0,
 			totalFocusMinutes: user.totalFocusMinutes,
 			achievements: user.achievements,
+			deletedAt: user.deletedAt,
+			isDeleted: user.isDeleted || false,
 		};
 
 		return NextResponse.json(
