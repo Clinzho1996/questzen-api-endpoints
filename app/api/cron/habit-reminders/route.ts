@@ -43,33 +43,41 @@ export async function GET(request: Request) {
 			`⏰ ${jobId}: Processing for hour ${currentHour}, date ${today}`
 		);
 
-		// 1. Find all habits with reminders enabled
+		// 1. Find all habits with reminders enabled AND active
 		const habits = await db
 			.collection("habits")
 			.find({
-				$or: [
-					{ "settings.reminders.enabled": true },
-					{ "settings.reminders": { $exists: true } }, // If reminders object exists
-					{ "reminderSettings.enabled": true }, // Alternative field name
-					{ "reminders.enabled": true }, // Another possibility
+				$and: [
+					// Active habits
+					{ $or: [{ isActive: true }, { isActive: { $exists: false } }] },
+					// Reminders enabled
+					{
+						$or: [
+							{ "settings.reminders.enabled": true },
+							{ "reminderSettings.enabled": true },
+						],
+					},
 				],
 			})
 			.toArray();
 
 		console.log(
-			`📊 ${jobId}: Found ${habits.length} habits with reminders enabled`
+			`📊 ${jobId}: Found ${habits.length} active habits with reminders enabled`
 		);
 
 		// 2. Filter habits based on timeOfDay settings
-		// Better time window logic
+		// Better time window logic (match the previous successful run at 18:14)
 		const getTimeWindow = (hour: number): string => {
-			if (hour >= 5 && hour < 11) return "morning"; // 5am-11am
-			if (hour >= 11 && hour < 17) return "afternoon"; // 11am-5pm
-			if (hour >= 17 && hour < 23) return "evening"; // 5pm-11pm
-			return "night"; // 11pm-5am
+			if (hour >= 6 && hour < 12) return "morning"; // 6am-11:59am
+			if (hour >= 12 && hour < 18) return "afternoon"; // 12pm-5:59pm
+			if (hour >= 18 && hour < 22) return "evening"; // 6pm-9:59pm
+			return "night"; // 10pm-5:59am
 		};
 
 		const currentTimeWindow = getTimeWindow(currentHour);
+		console.log(
+			`🕐 ${jobId}: Current time window: ${currentTimeWindow} (${currentHour}:00)`
+		);
 
 		const filteredHabits = habits.filter((habit) => {
 			const timeOfDay = habit.settings?.timeOfDay;
@@ -81,6 +89,22 @@ export async function GET(request: Request) {
 			return timeArray.some((time) => {
 				if (time === "any") return true;
 				if (time === currentTimeWindow) return true;
+
+				// Handle time ranges like "morning-afternoon"
+				if (time.includes("-")) {
+					const [start, end] = time.split("-");
+					const windows = ["morning", "afternoon", "evening", "night"];
+					const startIndex = windows.indexOf(start);
+					const endIndex = windows.indexOf(end);
+					const currentIndex = windows.indexOf(currentTimeWindow);
+
+					if (startIndex !== -1 && endIndex !== -1 && currentIndex !== -1) {
+						if (startIndex <= currentIndex && currentIndex <= endIndex) {
+							return true;
+						}
+					}
+				}
+
 				if (time.includes(":")) {
 					const [hourStr] = time.split(":");
 					return parseInt(hourStr) === currentHour;
@@ -106,31 +130,61 @@ export async function GET(request: Request) {
 			});
 		}
 
-		// 3. Process FILTERED habits in batches
+		// 3. Get all habit IDs to check for duplicates in one query
+		const habitIds = filteredHabits.map((h) => h._id);
+		const existingReminders = await db
+			.collection("habit_reminders")
+			.find({
+				habitId: { $in: habitIds },
+				date: today,
+			})
+			.toArray();
+
+		const remindedHabitIds = new Set(
+			existingReminders.map((r) => r.habitId.toString())
+		);
+
+		console.log(
+			`⏭️ ${jobId}: ${remindedHabitIds.size} habits already reminded today`
+		);
+
+		// Filter out already reminded habits
+		const habitsToRemind = filteredHabits.filter(
+			(habit) => !remindedHabitIds.has(habit._id.toString())
+		);
+
+		console.log(
+			`📧 ${jobId}: ${habitsToRemind.length} habits need fresh reminders`
+		);
+
+		if (habitsToRemind.length === 0) {
+			return NextResponse.json({
+				success: true,
+				jobId,
+				message: "All filtered habits already reminded today",
+				stats: {
+					totalHabits: habits.length,
+					filteredByTime: filteredHabits.length,
+					alreadyReminded: remindedHabitIds.size,
+					emailsSent: 0,
+					currentTimeWindow: currentTimeWindow,
+					currentHour: currentHour,
+				},
+				executionTime: `${Date.now() - startTime}ms`,
+				timestamp: now.toISOString(),
+			});
+		}
+
+		// 4. Process habits in batches
 		let emailsSent = 0;
 		const failedHabits: string[] = [];
 
-		for (let i = 0; i < filteredHabits.length; i += 5) {
-			const batch = filteredHabits.slice(i, i + 5);
+		for (let i = 0; i < habitsToRemind.length; i += 5) {
+			const batch = habitsToRemind.slice(i, i + 5);
 
 			await Promise.all(
 				batch.map(async (habit) => {
 					try {
-						// Check if already reminded today
-						const alreadyReminded = await db
-							.collection("habit_reminders")
-							.findOne({
-								habitId: habit._id,
-								date: today,
-							});
-
-						if (alreadyReminded) {
-							console.log(
-								`⏭️ ${jobId}: Already reminded today for habit ${habit.name}`
-							);
-							return;
-						}
-
 						// Get user info
 						const user = await db
 							.collection("users")
@@ -141,10 +195,14 @@ export async function GET(request: Request) {
 
 						if (!user?.email) {
 							console.log(
-								`⚠️ ${jobId}: No email found for habit ${habit.name}`
+								`⚠️ ${jobId}: No email found for habit "${habit.name}" (user: ${habit.userId})`
 							);
 							return;
 						}
+
+						console.log(
+							`📨 ${jobId}: Sending reminder for "${habit.name}" to ${user.email}`
+						);
 
 						// Send reminder email
 						await sendHabitReminderEmail(
@@ -174,6 +232,7 @@ export async function GET(request: Request) {
 							email: user.email,
 							sentAt: new Date(),
 							createdAt: new Date(),
+							timeWindow: currentTimeWindow,
 						});
 
 						emailsSent++;
@@ -182,7 +241,7 @@ export async function GET(request: Request) {
 						);
 					} catch (error: any) {
 						console.error(
-							`❌ ${jobId}: Failed for habit ${habit.name}:`,
+							`❌ ${jobId}: Failed for habit "${habit.name}":`,
 							error.message
 						);
 						failedHabits.push(`${habit.name}: ${error.message}`);
@@ -197,12 +256,19 @@ export async function GET(request: Request) {
 			success: true,
 			jobId,
 			executionTime: `${executionTime}ms`,
-			habitsChecked: habits.length,
-			filteredHabits: filteredHabits.length,
-			emailsSent: emailsSent,
-			failed: failedHabits.length,
-			failedDetails: failedHabits.length > 0 ? failedHabits : undefined,
-			nextRun: new Date(Date.now() + 3600000).toISOString(),
+			stats: {
+				totalHabits: habits.length,
+				filteredByTime: filteredHabits.length,
+				alreadyReminded: remindedHabitIds.size,
+				habitsToRemind: habitsToRemind.length,
+				emailsSent: emailsSent,
+				failed: failedHabits.length,
+				currentTimeWindow: currentTimeWindow,
+				currentHour: currentHour,
+			},
+			failedDetails:
+				failedHabits.length > 0 ? failedHabits.slice(0, 5) : undefined,
+			nextRun: "Check GitHub Actions schedule",
 			timestamp: now.toISOString(),
 		});
 	} catch (error: any) {
