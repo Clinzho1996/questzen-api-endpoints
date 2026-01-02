@@ -408,6 +408,9 @@ export async function POST(request: NextRequest) {
 		});
 
 		let habitData;
+		let habitName = "";
+		let habitDescription = "";
+		let habitCategory = "";
 
 		if (isPredefined && predefinedHabitId) {
 			// Get predefined habit
@@ -423,8 +426,16 @@ export async function POST(request: NextRequest) {
 				);
 			}
 
+			// Extract habit properties before spreading
+			habitName = predefinedHabit.name || "New Habit";
+			habitDescription = predefinedHabit.description || "";
+			habitCategory = predefinedHabit.category || "general";
+
 			habitData = {
 				...predefinedHabit,
+				name: habitName, // Explicitly add name
+				description: habitDescription, // Explicitly add description
+				category: habitCategory, // Explicitly add category
 				_id: undefined, // Will be set by MongoDB
 				userId: currentUser._id,
 				userFirebaseUid: currentUser.firebaseUid || undefined,
@@ -445,7 +456,12 @@ export async function POST(request: NextRequest) {
 					reminders:
 						reminders.length > 0
 							? reminders
-							: predefinedHabit.defaultSettings?.reminders || [],
+							: {
+									enabled: true,
+									schedule: ["daily"],
+									email: true,
+									push: false,
+							  },
 					duration: duration || predefinedHabit.defaultSettings?.duration || 5,
 				},
 				stats: {
@@ -467,24 +483,31 @@ export async function POST(request: NextRequest) {
 			};
 		} else {
 			// Custom habit
+			habitName = name;
+			habitDescription = description || "";
+			habitCategory = category || "custom";
+
 			habitData = {
 				userId: currentUser._id,
 				userFirebaseUid: currentUser.firebaseUid || undefined,
-				name,
-				description: description || "",
-				category: category || "custom",
+				name: habitName,
+				description: habitDescription,
+				category: habitCategory,
 				isPredefined: false,
 				isFromPredefined: false,
 				settings: {
 					timeOfDay,
 					timesPerWeek,
 					timesPerDay,
-					reminders: {
-						enabled: true,
-						schedule: ["daily"], // or ['daily']
-						email: true,
-						push: false,
-					},
+					reminders:
+						reminders.length > 0
+							? reminders
+							: {
+									enabled: true,
+									schedule: ["daily"],
+									email: true,
+									push: false,
+							  },
 					duration,
 				},
 				info: info || {},
@@ -512,6 +535,7 @@ export async function POST(request: NextRequest) {
 
 		console.log("📝 Creating habit with data:", {
 			userId: habitData.userId,
+			name: habitName,
 			isCollaborative: habitData.isCollaborative,
 			role: habitData.role,
 			collaborators: habitData.collaborators?.length || 0,
@@ -520,29 +544,44 @@ export async function POST(request: NextRequest) {
 		const result = await db.collection("habits").insertOne(habitData);
 		const habitId = result.insertedId;
 
+		// Trigger reminder for both predefined and custom habits
 		if (habitData.settings?.reminders?.enabled && currentUser.email) {
 			try {
+				console.log("📧 Sending habit creation reminder...");
+
+				// Use type assertion to handle the union type issue
+				const habitForEmail = habitData as any;
+
 				await sendHabitReminderEmail(
 					currentUser.email,
-					currentUser.displayName,
+					currentUser.displayName || "QuestZen User",
 					{
-						name: habitData.name,
-						description: habitData.description,
-						category: habitData.category,
-						timeOfDay: habitData.settings?.timeOfDay || [],
+						name: habitName,
+						description: habitDescription,
+						category: habitCategory,
+						timeOfDay: habitForEmail.settings?.timeOfDay || [],
 						streak: 0,
 						completionRate: 0,
 						habitId: habitId.toString(),
 						dueTime: new Date().toISOString(),
-						isCollaborative: habitData.isCollaborative,
-						collaboratorsCount: habitData.collaborators?.length || 0,
+						isCollaborative: habitForEmail.isCollaborative || false,
+						collaboratorsCount: habitForEmail.collaborators?.length || 0,
 					}
 				);
-				console.log(`✅ Test reminder sent for new habit: ${habitData.name}`);
-			} catch (emailError) {
-				console.error("Failed to send test reminder:", emailError);
+				console.log(`✅ Reminder sent for new habit: ${habitName}`);
+			} catch (emailError: any) {
+				console.error("Failed to send test reminder:", {
+					error: emailError.message,
+					stack: emailError.stack,
+				});
 				// Don't fail the habit creation if email fails
 			}
+		} else {
+			console.log("⚠️ Email reminder not triggered:", {
+				hasEmail: !!currentUser.email,
+				remindersEnabled: habitData.settings?.reminders?.enabled,
+				habitName: habitName,
+			});
 		}
 
 		// Create initial completion records for the week

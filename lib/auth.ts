@@ -8,7 +8,8 @@ import { getDatabase } from "./mongodb";
 
 export interface AuthUser {
 	_id?: string;
-	userId: string; // Can be firebaseUid OR MongoDB _id
+	userId: string;
+	name?: string;
 	email: string;
 	photoURL?: string;
 	subscriptionTier: "free" | "premium";
