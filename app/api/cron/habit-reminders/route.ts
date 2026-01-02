@@ -47,7 +47,6 @@ export async function GET(request: Request) {
 		const habits = await db
 			.collection("habits")
 			.find({
-				isActive: true,
 				$or: [
 					{ "settings.reminders.enabled": true },
 					{ "settings.reminders": { $exists: true } }, // If reminders object exists
