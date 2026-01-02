@@ -68,15 +68,39 @@ export async function GET(request: Request) {
 			// Handle both array and string formats
 			const timeArray = Array.isArray(timeOfDay) ? timeOfDay : [timeOfDay];
 
+			// Check for "any" in array
+			if (timeArray.includes("any")) return true;
+
+			// Current time checks
+			const currentHour = new Date().getHours();
+
+			// Check each time preference
 			for (const time of timeArray) {
-				if (time === "any") return true;
 				if (time === "morning" && currentHour >= 6 && currentHour < 12)
 					return true;
 				if (time === "afternoon" && currentHour >= 12 && currentHour < 18)
 					return true;
 				if (time === "evening" && currentHour >= 18 && currentHour < 22)
 					return true;
-				if (time === `${currentHour}:00`) return true;
+
+				// Check specific time like "9:00"
+				if (time.includes(":")) {
+					const [hourStr] = time.split(":");
+					const hour = parseInt(hourStr, 10);
+					if (hour === currentHour) return true;
+				}
+			}
+
+			// If no match, check if we should send anyway (for testing)
+			// Add this for debugging/testing:
+			const FORCE_SEND_FOR_TESTING = true; // Set to false in production
+			if (FORCE_SEND_FOR_TESTING && timeArray.length > 0) {
+				console.log(
+					`⚠️ ${jobId}: Forcing send for testing - habit: ${
+						habit.name
+					}, timeOfDay: ${JSON.stringify(timeArray)}`
+				);
+				return true;
 			}
 
 			return false;
