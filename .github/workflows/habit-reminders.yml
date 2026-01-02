@@ -2,54 +2,50 @@ name: Habit Reminders Cron
 
 on:
   schedule:
-    - cron: "0 * * * *"
-  workflow_dispatch:
+    - cron: "0 * * * *" # Every hour at minute 0
+  workflow_dispatch: # Allow manual runs
 
-env:
-  CRON_SECRET: ${{ secrets.CRON_SECRET }}
-  APP_URL: https://questzen-api-endpoints.vercel.app # Hardcode here
+# Remove the "permissions" section or place it correctly
 
 jobs:
-  trigger-reminders:
+  cron:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    permissions:
+      issues: write # Place it here, inside the job
 
     steps:
-      - name: Check current time
-        run: echo "⏰ Running at $(date -u)"
-
-      - name: Trigger Habit Reminders
+      - name: Run Habit Reminders
         run: |
-          echo "🚀 Starting habit reminders cron job..."
-          echo "📡 Calling: $APP_URL/api/cron/habit-reminders"
+          echo "🚀 Starting habit reminders at $(date -u)"
 
-          response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            "$APP_URL/api/cron/habit-reminders")
+          response=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://questzen-api-endpoints.vercel.app/api/cron/habit-reminders")
 
-          body=$(echo "$response" | grep -v HTTP_STATUS)
-          http_status=$(echo "$response" | grep HTTP_STATUS | cut -d':' -f2)
+          # Separate body and status code
+          body=$(echo "$response" | head -n -1)
+          status_code=$(echo "$response" | tail -n 1)
 
-          echo "📊 Response Status: $http_status"
-          echo "📦 Response Body:"
-          echo "$body" | jq '.' 2>/dev/null || echo "$body"
+          echo "📊 HTTP Status: $status_code"
+          echo "📦 Response: $body"
 
-          if [ "$http_status" -ne 200 ]; then
-            echo "❌ Cron job failed with status: $http_status"
+          if [ "$status_code" -eq 200 ]; then
+            echo "✅ Cron job completed successfully"
+          else
+            echo "❌ Cron job failed"
             exit 1
           fi
 
-          echo "✅ Cron job completed successfully"
-
-      - name: Send notification on failure
+      # Now this will work with the correct permissions
+      - name: Create issue on failure
         if: failure()
         uses: actions/github-script@v6
         with:
           script: |
-            github.rest.issues.create({
+            await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: '🚨 Habit Reminders Cron Failed',
-              body: `The habit reminders cron job failed at ${new Date().toISOString()}. Please check the workflow run.`,
+              title: `🚨 Habit Reminders Cron Failed at ${new Date().toISOString()}`,
+              body: `The habit reminders cron job failed.\n\nCheck the logs for details.`,
               labels: ['cron-failure']
             })
