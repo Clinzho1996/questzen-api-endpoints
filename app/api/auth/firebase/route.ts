@@ -168,8 +168,8 @@ export async function POST(request: NextRequest) {
 				subscriptionStatus: "inactive",
 				createdAt: now,
 				updatedAt: now,
-				deletedAt: null, // Make sure this field exists
-				isDeleted: false, // Add this field
+				deletedAt: null,
+				isDeleted: false,
 			};
 
 			const result = await usersCollection.insertOne(newUser);
@@ -179,6 +179,18 @@ export async function POST(request: NextRequest) {
 			};
 			isNewUser = true;
 			console.log("✅ New user created with ID:", result.insertedId);
+
+			// Send welcome email for new Firebase users (non-blocking)
+			if (isNewUser && user.email) {
+				try {
+					await sendWelcomeEmail(user.email, user.displayName);
+					console.log(`Welcome email successfully sent to ${user.email}`);
+				} catch (emailError) {
+					// Log the error but don't fail the signup
+					console.error("Failed to send welcome email:", emailError);
+					// You might want to log this to a monitoring service
+				}
+			}
 		} else {
 			// Update existing user's streak
 			const updatedUser = updateStreak(user);
@@ -201,15 +213,6 @@ export async function POST(request: NextRequest) {
 			console.log("✅ Existing user updated, streak:", user.streak);
 		}
 
-		// Send welcome email (non-blocking)
-		try {
-			await sendWelcomeEmail(user.email, user.displayName);
-			console.log(`Welcome email successfully sent to ${user.email}`);
-		} catch (emailError) {
-			// Log the error but don't fail the signup
-			console.error("Failed to send welcome email:", emailError);
-			// You might want to log this to a monitoring service
-		}
 		// Generate backend JWT token
 		const backendToken = generateToken(user._id!.toString());
 		console.log("🔐 JWT generated for user:", user.email);
