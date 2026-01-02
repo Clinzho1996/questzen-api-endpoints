@@ -2,7 +2,7 @@ name: Habit Reminders Cron
 
 on:
   schedule:
-    - cron: "0 * * * *" # Every hour at minute 0
+    - cron: "0 6,12,18,0 * * *" # Every 6 hours
   workflow_dispatch: # Allow manual runs
 
 # Remove the "permissions" section or place it correctly
