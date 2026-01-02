@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
 
 		const transaction = await paystack.initializeTransaction({
 			email: userData.email,
-			amount: plan === "monthly" ? 200000 : 2100000,
+			amount: plan === "monthly" ? 250000 : 2800000,
 			plan: planCode,
 			metadata: {
 				userId: user.userId,
