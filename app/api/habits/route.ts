@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 // GET all habits (both user's and predefined)
 
+// GET all habits (both user's and predefined)
 export async function GET(request: NextRequest) {
 	try {
 		const user = await requireAuth(request);
@@ -156,6 +157,24 @@ export async function GET(request: NextRequest) {
 				.map((c) => c.habitId.toString())
 		);
 
+		// NEW: Get recent reminder logs for each habit
+		const recentReminders = await db
+			.collection("habit_reminders")
+			.find({
+				habitId: { $in: habitIds },
+				userId: currentUserId,
+			})
+			.sort({ sentAt: -1 })
+			.toArray();
+
+		// Create a map of habitId -> last reminder sent
+		const lastReminderMap = new Map();
+		recentReminders.forEach((reminder) => {
+			if (!lastReminderMap.has(reminder.habitId.toString())) {
+				lastReminderMap.set(reminder.habitId.toString(), reminder.sentAt);
+			}
+		});
+
 		// Transform user habits
 		const transformedUserHabits = uniqueHabits.map((habit) => {
 			const isCompletedToday = completedHabitIds.has(habit._id.toString());
@@ -184,14 +203,80 @@ export async function GET(request: NextRequest) {
 				(p: any) => p.userId === currentUserIdString
 			);
 
+			// NEW: Parse reminder settings
+			const reminderSettings = (() => {
+				const settings = habit.settings || {};
+				const reminders = settings.reminders || {};
+
+				// Default reminder settings
+				const defaults = {
+					enabled: true,
+					schedule: ["daily"],
+					email: true,
+					push: false,
+					timeOfDay: settings.timeOfDay || ["any"],
+				};
+
+				// If reminders is an array (old format), convert to object
+				if (Array.isArray(reminders)) {
+					return {
+						...defaults,
+						enabled: reminders.length > 0,
+					};
+				}
+
+				// If reminders is an object, merge with defaults
+				if (typeof reminders === "object" && reminders !== null) {
+					return {
+						...defaults,
+						...reminders,
+						// Ensure schedule is an array
+						schedule: Array.isArray(reminders.schedule)
+							? reminders.schedule
+							: ["daily"],
+					};
+				}
+
+				return defaults;
+			})();
+
+			// NEW: Calculate next reminder time
+			const calculateNextReminder = () => {
+				if (!reminderSettings.enabled) return null;
+
+				const now = new Date();
+				const lastReminder = lastReminderMap.get(habit._id.toString());
+
+				// If never reminded, next is now
+				if (!lastReminder) return now.toISOString();
+
+				const lastReminderDate = new Date(lastReminder);
+
+				// For daily schedule, next is tomorrow same time
+				if (reminderSettings.schedule.includes("daily")) {
+					const next = new Date(lastReminderDate);
+					next.setDate(next.getDate() + 1);
+					return next.toISOString();
+				}
+
+				// For weekly schedule (e.g., ["monday", "wednesday", "friday"])
+				// This is simplified - you might want more complex logic
+				return new Date(
+					lastReminderDate.getTime() + 24 * 60 * 60 * 1000
+				).toISOString();
+			};
+
+			const nextReminderTime = calculateNextReminder();
+
 			console.log(`🔍 Transforming habit ${habit.name}:`, {
 				habitId: habit._id.toString(),
 				userId: habit.userId?.toString(),
 				currentUserId: currentUserIdString,
 				userRole,
 				isCollaborator,
-				participant: !!participant,
-				collaboratorsCount: habit.collaborators?.length || 0,
+				reminderSettings,
+				lastReminder: lastReminderMap.get(habit._id.toString()),
+				nextReminder: nextReminderTime,
 			});
 
 			return {
@@ -201,11 +286,12 @@ export async function GET(request: NextRequest) {
 				category: habit.category || "custom",
 				icon: habit.icon || "✅",
 				color: habit.color || "#3B82F6",
-				settings: habit.settings || {
-					timesPerWeek: 7,
-					timeOfDay: ["any"],
-					reminders: [],
-					duration: 5,
+				settings: {
+					timesPerWeek: habit.settings?.timesPerWeek || 7,
+					timeOfDay: habit.settings?.timeOfDay || ["any"],
+					duration: habit.settings?.duration || 5,
+					// NEW: Include structured reminders
+					reminders: reminderSettings,
 				},
 				stats: habit.stats || {
 					totalCompletions: 0,
@@ -231,6 +317,13 @@ export async function GET(request: NextRequest) {
 				participants: habit.participants || [],
 				ownerId: habit.userId?.toString(),
 				ownerInfo: habit.ownerInfo || null,
+				// NEW: REMINDER PROPERTIES
+				reminders: {
+					enabled: reminderSettings.enabled,
+					lastSent: lastReminderMap.get(habit._id.toString()) || null,
+					nextScheduled: nextReminderTime,
+					settings: reminderSettings,
+				},
 				// If collaborator, include invitation info
 				invitationInfo: isCollaborator
 					? {
@@ -255,14 +348,39 @@ export async function GET(request: NextRequest) {
 			timeCommitment: habit.timeCommitment || 5,
 			benefits: habit.benefits || [],
 			tags: habit.tags || [],
-			defaultSettings: habit.defaultSettings || {
-				timesPerWeek: 7,
-				timeOfDay: ["any"],
-				reminders: [],
-				duration: 5,
+			defaultSettings: {
+				timesPerWeek: habit.defaultSettings?.timesPerWeek || 7,
+				timeOfDay: habit.defaultSettings?.timeOfDay || ["any"],
+				duration: habit.defaultSettings?.duration || 5,
+				// NEW: Include reminders in default settings
+				reminders: {
+					enabled: true,
+					schedule: ["daily"],
+					email: true,
+					push: false,
+				},
 			},
 			isPredefined: true,
 		}));
+
+		// NEW: Calculate reminder statistics
+		const totalHabitsWithReminders = transformedUserHabits.filter(
+			(h) => h.reminders.enabled
+		).length;
+
+		const upcomingReminders = transformedUserHabits
+			.filter((h) => h.reminders.enabled && h.reminders.nextScheduled)
+			.sort(
+				(a, b) =>
+					new Date(a.reminders.nextScheduled!).getTime() -
+					new Date(b.reminders.nextScheduled!).getTime()
+			)
+			.slice(0, 5) // Top 5 upcoming reminders
+			.map((h) => ({
+				habitId: h.id,
+				habitName: h.name,
+				nextReminder: h.reminders.nextScheduled,
+			}));
 
 		const response = {
 			userHabits: transformedUserHabits,
@@ -272,11 +390,20 @@ export async function GET(request: NextRequest) {
 				ownHabits: ownHabits.length,
 				collaborativeHabits: collaborativeHabits.length,
 				isCollaboratorIn: collaborativeHabits.length,
+				// NEW: Reminder statistics
+				reminders: {
+					enabledFor: totalHabitsWithReminders,
+					totalHabits: transformedUserHabits.length,
+					upcomingCount: upcomingReminders.length,
+					upcomingReminders: upcomingReminders,
+				},
 			},
 		};
 
 		console.log(
-			`✅ Returned ${transformedUserHabits.length} user habits (${ownHabits.length} own, ${collaborativeHabits.length} collaborative)`
+			`✅ Returned ${transformedUserHabits.length} user habits ` +
+				`(${ownHabits.length} own, ${collaborativeHabits.length} collaborative) ` +
+				`with ${totalHabitsWithReminders} having reminders enabled`
 		);
 
 		return NextResponse.json(response);
