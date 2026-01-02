@@ -67,7 +67,14 @@ export async function POST(request: NextRequest) {
 		const result = await db.collection("users").insertOne(newUser);
 
 		// Send welcome email (non-blocking)
-		sendWelcomeEmail(email, displayName).catch(console.error);
+		try {
+			await sendWelcomeEmail(email, displayName);
+			console.log(`Welcome email successfully sent to ${email}`);
+		} catch (emailError) {
+			// Log the error but don't fail the signup
+			console.error("Failed to send welcome email:", emailError);
+			// You might want to log this to a monitoring service
+		}
 
 		// Generate token
 		const token = generateToken(result.insertedId.toString());

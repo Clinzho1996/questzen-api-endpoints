@@ -252,18 +252,44 @@ export async function sendPasswordResetConfirmationEmail(
 
 export async function sendWelcomeEmail(email: string, displayName: string) {
 	try {
+		const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+
+		const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #667eea; color: white; padding: 20px; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>🎉 Welcome to QuestZen AI!</h1>
+          </div>
+          <h2>Hello ${displayName}!</h2>
+          <p>We're excited to have you on board. Start your journey to achieving your goals with AI-powered guidance.</p>
+          <p><a href="${frontendUrl}">Get started by creating your first quest!</a></p>
+        </div>
+      </body>
+      </html>
+    `;
+
 		await transporter.sendMail({
-			from: process.env.SMTP_FROM || "noreply@questzen.app",
+			from: process.env.SMTP_FROM || '"QuestZen AI" <welcome@questzen.app>',
 			to: email,
 			subject: "Welcome to QuestZen AI! 🎯",
-			html: `
-        <h1>Welcome to QuestZen AI, ${displayName}! 🎉</h1>
-        <p>We're excited to have you on board. Start your journey to achieving your goals with AI-powered guidance.</p>
-        <p>Get started by creating your first quest!</p>
-      `,
+			html: html,
+			text: `Welcome to QuestZen AI, ${displayName}! We're excited to have you on board. Get started at: ${frontendUrl}`,
 		});
+
+		console.log(`Welcome email sent to ${email}`);
+		return true;
 	} catch (error) {
-		console.error("Email sending error:", error);
+		console.error(`Failed to send welcome email to ${email}:`, error);
+		throw error;
 	}
 }
 
