@@ -1,5 +1,6 @@
 import { sendHabitReminderEmail } from "@/lib/habitReminder";
 import { getDatabase } from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -59,14 +60,33 @@ export async function GET(request: Request) {
 					},
 				],
 			})
+			.project({
+				name: 1,
+				userId: 1,
+				"settings.timeOfDay": 1,
+				description: 1,
+				category: 1,
+				stats: 1,
+				isCollaborative: 1,
+				collaborators: 1,
+			})
 			.toArray();
 
 		console.log(
 			`📊 ${jobId}: Found ${habits.length} active habits with reminders enabled`
 		);
 
+		// Debug: Check first few habits
+		console.log(`🔍 ${jobId}: Sample habits:`);
+		habits.slice(0, 3).forEach((habit, i) => {
+			console.log(
+				`  ${i + 1}. "${habit.name}" - userId: ${
+					habit.userId
+				} (type: ${typeof habit.userId})`
+			);
+		});
+
 		// 2. Filter habits based on timeOfDay settings
-		// Better time window logic (match the previous successful run at 18:14)
 		const getTimeWindow = (hour: number): string => {
 			if (hour >= 6 && hour < 12) return "morning"; // 6am-11:59am
 			if (hour >= 12 && hour < 18) return "afternoon"; // 12pm-5:59pm
@@ -80,6 +100,14 @@ export async function GET(request: Request) {
 		);
 
 		const filteredHabits = habits.filter((habit) => {
+			// First check if habit has userId
+			if (!habit.userId) {
+				console.log(
+					`⚠️ ${jobId}: Habit "${habit.name}" has no userId, skipping`
+				);
+				return false;
+			}
+
 			const timeOfDay = habit.settings?.timeOfDay;
 			if (!timeOfDay || timeOfDay.length === 0) return true;
 
@@ -114,7 +142,11 @@ export async function GET(request: Request) {
 		});
 
 		console.log(
-			`⏰ ${jobId}: After time filtering: ${filteredHabits.length} habits need reminders now`
+			`⏰ ${jobId}: After filtering: ${
+				filteredHabits.length
+			} habits need reminders (removed ${
+				habits.length - filteredHabits.length
+			} without userId or time mismatch)`
 		);
 
 		if (filteredHabits.length === 0) {
@@ -164,7 +196,7 @@ export async function GET(request: Request) {
 				message: "All filtered habits already reminded today",
 				stats: {
 					totalHabits: habits.length,
-					filteredByTime: filteredHabits.length,
+					filteredHabits: filteredHabits.length,
 					alreadyReminded: remindedHabitIds.size,
 					emailsSent: 0,
 					currentTimeWindow: currentTimeWindow,
@@ -175,7 +207,50 @@ export async function GET(request: Request) {
 			});
 		}
 
-		// 4. Process habits in batches
+		// 4. Group habits by user for batch user lookup
+		const userIds = habitsToRemind
+			.map((h) => h.userId)
+			.filter(
+				(userId, index, self) => userId && self.indexOf(userId) === index
+			);
+
+		console.log(`👥 ${jobId}: Looking up ${userIds.length} unique users`);
+
+		// Convert userIds to ObjectIds for query
+		const userObjectIds = userIds
+			.map((id) => {
+				try {
+					// Handle both ObjectId and string
+					return typeof id === "string" ? new ObjectId(id) : id;
+				} catch {
+					console.log(`⚠️ ${jobId}: Invalid user ID format: ${id}`);
+					return null;
+				}
+			})
+			.filter((id) => id !== null);
+
+		// Get all users in one query
+		const users = await db
+			.collection("users")
+			.find({
+				_id: { $in: userObjectIds },
+			})
+			.project({
+				email: 1,
+				displayName: 1,
+				_id: 1,
+			})
+			.toArray();
+
+		// Create user map for quick lookup
+		const userMap = new Map();
+		users.forEach((user) => {
+			userMap.set(user._id.toString(), user);
+		});
+
+		console.log(`👤 ${jobId}: Found ${users.length} users in database`);
+
+		// 5. Process habits in batches
 		let emailsSent = 0;
 		const failedHabits: string[] = [];
 
@@ -185,17 +260,41 @@ export async function GET(request: Request) {
 			await Promise.all(
 				batch.map(async (habit) => {
 					try {
-						// Get user info
-						const user = await db
-							.collection("users")
-							.findOne(
-								{ _id: habit.userId },
-								{ projection: { email: 1, displayName: 1 } }
+						// Get user from map
+						const userIdStr = habit.userId.toString();
+						const user = userMap.get(userIdStr);
+
+						if (!user) {
+							console.log(
+								`⚠️ ${jobId}: No user found for habit "${habit.name}" (userId: ${userIdStr})`
 							);
 
-						if (!user?.email) {
+							// Debug: Try to find the user directly
+							try {
+								const directUser = await db
+									.collection("users")
+									.findOne(
+										{ _id: new ObjectId(userIdStr) },
+										{ projection: { email: 1 } }
+									);
+								if (directUser) {
+									console.log(
+										`   Found user via direct query: ${directUser.email}`
+									);
+								} else {
+									console.log(
+										`   User ID ${userIdStr} not found in users collection`
+									);
+								}
+							} catch (err: any) {
+								console.log(`   Error querying user: ${err.message}`);
+							}
+							return;
+						}
+
+						if (!user.email) {
 							console.log(
-								`⚠️ ${jobId}: No email found for habit "${habit.name}" (user: ${habit.userId})`
+								`⚠️ ${jobId}: User ${user._id} has no email for habit "${habit.name}"`
 							);
 							return;
 						}
@@ -258,9 +357,11 @@ export async function GET(request: Request) {
 			executionTime: `${executionTime}ms`,
 			stats: {
 				totalHabits: habits.length,
-				filteredByTime: filteredHabits.length,
+				filteredHabits: filteredHabits.length,
 				alreadyReminded: remindedHabitIds.size,
 				habitsToRemind: habitsToRemind.length,
+				uniqueUsers: userIds.length,
+				usersFound: users.length,
 				emailsSent: emailsSent,
 				failed: failedHabits.length,
 				currentTimeWindow: currentTimeWindow,
