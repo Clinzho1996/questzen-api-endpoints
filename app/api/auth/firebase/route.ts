@@ -1,4 +1,5 @@
 import { generateToken } from "@/lib/auth";
+import { sendWelcomeEmail } from "@/lib/email";
 import { updateStreak, User } from "@/lib/models/User";
 import { getDatabase } from "@/lib/mongodb";
 import * as admin from "firebase-admin";
@@ -200,6 +201,15 @@ export async function POST(request: NextRequest) {
 			console.log("✅ Existing user updated, streak:", user.streak);
 		}
 
+		// Send welcome email (non-blocking)
+		try {
+			await sendWelcomeEmail(user.email, user.displayName);
+			console.log(`Welcome email successfully sent to ${user.email}`);
+		} catch (emailError) {
+			// Log the error but don't fail the signup
+			console.error("Failed to send welcome email:", emailError);
+			// You might want to log this to a monitoring service
+		}
 		// Generate backend JWT token
 		const backendToken = generateToken(user._id!.toString());
 		console.log("🔐 JWT generated for user:", user.email);
