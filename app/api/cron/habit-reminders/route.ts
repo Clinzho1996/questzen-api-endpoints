@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 			`⏰ ${jobId}: Processing for hour ${currentHour}, date ${today}`
 		);
 
-		// 1. Get ALL habits with reminders enabled (regardless of userId)
+		// 1. Get ALL habits with reminders enabled
 		const allHabits = await db
 			.collection("habits")
 			.find({
@@ -70,6 +70,8 @@ export async function GET(request: Request) {
 				isCollaborative: 1,
 				collaborators: 1,
 				isPredefined: 1,
+				isFromPredefined: 1,
+				createdAt: 1,
 			})
 			.toArray();
 
@@ -78,32 +80,45 @@ export async function GET(request: Request) {
 		);
 
 		// Debug: Show habit distribution
+		const predefinedTemplates = allHabits.filter(
+			(h) => h.isPredefined === true
+		);
+		const userAddedFromPredefined = allHabits.filter(
+			(h) => h.isFromPredefined === true
+		);
+		const customHabits = allHabits.filter(
+			(h) => h.isPredefined === false && h.isFromPredefined === false
+		);
 		const habitsWithUserId = allHabits.filter((h) => h.userId).length;
 		const habitsWithoutUserId = allHabits.filter((h) => !h.userId).length;
-		const predefinedHabits = allHabits.filter((h) => h.isPredefined).length;
-		const userHabits = allHabits.filter((h) => !h.isPredefined).length;
 
 		console.log(`🔍 ${jobId}: Habit breakdown:`, {
+			predefinedTemplates: predefinedTemplates.length,
+			userAddedFromPredefined: userAddedFromPredefined.length,
+			customHabits: customHabits.length,
 			withUserId: habitsWithUserId,
 			withoutUserId: habitsWithoutUserId,
-			predefined: predefinedHabits,
-			userHabits: userHabits,
 		});
 
-		// 2. Filter out predefined habits and habits without userId
+		// 2. Filter habits: Skip predefined templates but keep user-added predefined habits
 		const validUserHabits = allHabits.filter((habit) => {
-			// Skip predefined habits (these are templates)
-			if (habit.isPredefined) {
+			// Skip predefined habit TEMPLATES (isPredefined: true)
+			if (habit.isPredefined === true) {
 				return false;
 			}
+
+			// User-added predefined habits (isFromPredefined: true) should have userId
+			// Custom habits (isPredefined: false, isFromPredefined: false) should have userId
 
 			// Check if userId exists and is valid
 			if (!habit.userId) {
-				console.log(`⚠️ ${jobId}: Skipping habit "${habit.name}" - no userId`);
+				console.log(
+					`⚠️ ${jobId}: Skipping habit "${habit.name}" - no userId (isPredefined: ${habit.isPredefined}, isFromPredefined: ${habit.isFromPredefined})`
+				);
 				return false;
 			}
 
-			// Check if userId is a valid ObjectId or string
+			// Validate userId format
 			try {
 				if (habit.userId instanceof ObjectId) {
 					return true;
@@ -130,7 +145,7 @@ export async function GET(request: Request) {
 		});
 
 		console.log(
-			`👤 ${jobId}: ${validUserHabits.length} habits with valid userIds`
+			`👤 ${jobId}: ${validUserHabits.length} user habits with valid userIds`
 		);
 
 		// 3. Filter by time window
@@ -182,6 +197,18 @@ export async function GET(request: Request) {
 			`⏰ ${jobId}: After time filtering: ${filteredHabits.length} habits need reminders`
 		);
 
+		// Debug: Show which habits passed time filtering
+		if (filteredHabits.length > 0) {
+			console.log(`📝 ${jobId}: Habits that passed time filter:`);
+			filteredHabits.forEach((habit) => {
+				console.log(
+					`   - "${habit.name}" (userId: ${
+						habit.userId
+					}, timeOfDay: ${JSON.stringify(habit.settings?.timeOfDay)})`
+				);
+			});
+		}
+
 		if (filteredHabits.length === 0) {
 			return NextResponse.json({
 				success: true,
@@ -193,6 +220,11 @@ export async function GET(request: Request) {
 					filteredHabits: 0,
 					currentTimeWindow: currentTimeWindow,
 					currentHour: currentHour,
+					breakdown: {
+						predefinedTemplates: predefinedTemplates.length,
+						userAddedFromPredefined: userAddedFromPredefined.length,
+						customHabits: customHabits.length,
+					},
 				},
 				executionTime: `${Date.now() - startTime}ms`,
 				timestamp: now.toISOString(),
@@ -267,6 +299,12 @@ export async function GET(request: Request) {
 			})
 			.filter((id) => id !== null);
 
+		// Debug: Show which user IDs we're looking for
+		console.log(
+			`🔍 ${jobId}: User IDs to lookup:`,
+			userObjectIds.map((id) => id.toString())
+		);
+
 		// Get users
 		const users = await db
 			.collection("users")
@@ -287,12 +325,31 @@ export async function GET(request: Request) {
 
 		console.log(`👤 ${jobId}: Found ${users.length} users in database`);
 
-		// Debug: Show user mapping
-		console.log(`🔍 ${jobId}: User mapping:`, {
-			userIdsRequested: userIds.length,
-			usersFound: users.length,
-			missingUsers: userIds.length - users.length,
-		});
+		// Debug: Show which users were found vs missing
+		const foundUserIds = users.map((u) => u._id.toString());
+		const missingUserIds = userObjectIds
+			.map((id) => id.toString())
+			.filter((id) => !foundUserIds.includes(id));
+
+		if (missingUserIds.length > 0) {
+			console.log(`❌ ${jobId}: Missing users with IDs:`, missingUserIds);
+
+			// Find habits with missing users for debugging
+			const habitsWithMissingUsers = habitsToRemind.filter((habit) => {
+				const habitUserId =
+					habit.userId instanceof ObjectId
+						? habit.userId.toString()
+						: String(habit.userId);
+				return missingUserIds.includes(habitUserId);
+			});
+
+			console.log(`🔍 ${jobId}: Habits with missing users:`);
+			habitsWithMissingUsers.forEach((habit) => {
+				console.log(
+					`   - "${habit.name}" (userId: ${habit.userId}, created: ${habit.createdAt})`
+				);
+			});
+		}
 
 		// 6. Process habits
 		let emailsSent = 0;
@@ -324,7 +381,17 @@ export async function GET(request: Request) {
 
 						if (!user) {
 							console.log(
-								`⚠️ ${jobId}: User ${userIdStr} not found for habit "${habit.name}"`
+								`❌ ${jobId}: User ${userIdStr} not found for habit "${habit.name}" - user may have been deleted`
+							);
+							// Optional: Disable reminders for this habit since user doesn't exist
+							await db
+								.collection("habits")
+								.updateOne(
+									{ _id: habit._id },
+									{ $set: { "settings.reminders.enabled": false } }
+								);
+							console.log(
+								`🔄 ${jobId}: Disabled reminders for orphaned habit "${habit.name}"`
 							);
 							return;
 						}
@@ -401,15 +468,22 @@ export async function GET(request: Request) {
 				habitsToRemind: habitsToRemind.length,
 				uniqueUsers: userIds.length,
 				usersFound: users.length,
+				missingUsers: missingUserIds.length,
 				emailsSent: emailsSent,
 				successfulHabits: successfulHabits.length,
 				failed: failedHabits.length,
 				currentTimeWindow: currentTimeWindow,
 				currentHour: currentHour,
+				breakdown: {
+					predefinedTemplates: predefinedTemplates.length,
+					userAddedFromPredefined: userAddedFromPredefined.length,
+					customHabits: customHabits.length,
+				},
 			},
 			successfulHabits: successfulHabits.slice(0, 10),
 			failedDetails:
 				failedHabits.length > 0 ? failedHabits.slice(0, 5) : undefined,
+			missingUsers: missingUserIds.length > 0 ? missingUserIds : undefined,
 			nextRun: "Check GitHub Actions schedule",
 			timestamp: now.toISOString(),
 		});
