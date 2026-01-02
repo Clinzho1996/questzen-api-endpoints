@@ -67,7 +67,7 @@ export async function sendHabitReminderEmail(
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
           }
           .header { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            background: #2D3748; 
             color: white; 
             padding: 40px 30px; 
             text-align: center; 
@@ -164,7 +164,7 @@ export async function sendHabitReminderEmail(
           }
           .button { 
             display: inline-block; 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            background: #2D3748; 
             color: white; 
             padding: 16px 32px; 
             text-decoration: none; 
