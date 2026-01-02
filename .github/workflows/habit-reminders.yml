@@ -1,0 +1,59 @@
+name: Habit Reminders Cron
+
+on:
+  schedule:
+    # Run every hour at minute 0
+    - cron: '0 * * * *'
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+  
+env:
+  CRON_SECRET: ${{ secrets.CRON_SECRET }}
+  APP_URL: ${{ secrets.APP_URL }}
+
+jobs:
+  trigger-reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # Prevent hanging
+    
+    steps:
+      - name: Check current time
+        run: echo "Running at $(date)"
+        
+      - name: Trigger Habit Reminders
+        run: |
+          echo "📅 Cron job started: $(date)"
+          echo "🌐 Calling: $APP_URL/api/cron/habit-reminders"
+          
+          # Make the API call
+          response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$APP_URL/api/cron/habit-reminders")
+          
+          # Extract body and status
+          body=$(echo "$response" | grep -v HTTP_STATUS)
+          http_status=$(echo "$response" | grep HTTP_STATUS | cut -d':' -f2)
+          
+          echo "📤 Response Status: $http_status"
+          echo "📥 Response Body: $body"
+          
+          # Fail if not 200
+          if [ "$http_status" -ne 200 ]; then
+            echo "❌ Cron job failed with status: $http_status"
+            exit 1
+          fi
+          
+          echo "✅ Cron job completed successfully"
+          
+      - name: Send notification on failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Habit Reminders Cron Failed',
+              body: `The habit reminders cron job failed at ${new Date().toISOString()}. Please check the workflow run.`,
+              labels: ['cron-failure']
+            })
