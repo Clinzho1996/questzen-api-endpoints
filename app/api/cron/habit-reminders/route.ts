@@ -1,6 +1,6 @@
 import { sendHabitReminderEmail } from "@/lib/habitReminder";
 import { getDatabase } from "@/lib/mongodb";
-import { Document, WithId } from "mongodb";
+import { Document, ObjectId, WithId } from "mongodb";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -9,7 +9,7 @@ export const maxDuration = 30;
 // Define habit interface that extends MongoDB types
 interface HabitDocument extends WithId<Document> {
 	name: string;
-	userId: any;
+	userId?: any; // Make optional since we're seeing undefined
 	settings?: {
 		timeOfDay?: string | string[];
 		reminders?: {
@@ -116,6 +116,12 @@ export async function GET(request: Request) {
 		const typedHabits = habits as HabitDocument[];
 
 		const filteredHabits = typedHabits.filter((habit: HabitDocument) => {
+			// First, check if userId exists
+			if (!habit.userId) {
+				console.log(`⚠️ ${jobId}: Habit ${habit._id} has no userId, skipping`);
+				return false;
+			}
+
 			const timeOfDay = habit.settings?.timeOfDay;
 
 			// If no time preference, include it
@@ -164,14 +170,18 @@ export async function GET(request: Request) {
 		});
 
 		console.log(
-			`⏰ ${jobId}: After filtering: ${filteredHabits.length} habits need reminders`
+			`⏰ ${jobId}: After filtering: ${
+				filteredHabits.length
+			} habits need reminders (removed ${
+				typedHabits.length - filteredHabits.length
+			} without userId or time mismatch)`
 		);
 
 		if (filteredHabits.length === 0) {
 			return NextResponse.json({
 				success: true,
 				jobId,
-				message: `No habits match current time window (${currentTimeWindow})`,
+				message: `No habits match current time window (${currentTimeWindow}) or have userId`,
 				habitsChecked: habits.length,
 				filteredHabits: 0,
 				emailsSent: 0,
@@ -187,12 +197,31 @@ export async function GET(request: Request) {
 
 		// Group habits by user to avoid duplicate emails
 		const habitsByUser = new Map<string, HabitDocument[]>();
+
 		filteredHabits.forEach((habit: HabitDocument) => {
-			const userId = habit.userId.toString();
-			if (!habitsByUser.has(userId)) {
-				habitsByUser.set(userId, []);
+			// Make sure userId exists before trying to use it
+			if (!habit.userId) {
+				console.log(
+					`⚠️ ${jobId}: Habit ${habit._id} has no userId, skipping grouping`
+				);
+				return;
 			}
-			habitsByUser.get(userId)!.push(habit);
+
+			// Handle both string and ObjectId userIds
+			let userIdStr: string;
+			try {
+				userIdStr = habit.userId.toString();
+			} catch (error) {
+				console.log(
+					`⚠️ ${jobId}: Habit ${habit._id} has invalid userId, skipping`
+				);
+				return;
+			}
+
+			if (!habitsByUser.has(userIdStr)) {
+				habitsByUser.set(userIdStr, []);
+			}
+			habitsByUser.get(userIdStr)!.push(habit);
 		});
 
 		console.log(
@@ -213,7 +242,7 @@ export async function GET(request: Request) {
 
 						// Get user info
 						const user = await db.collection("users").findOne(
-							{ _id: userHabits[0].userId },
+							{ _id: new ObjectId(userId) }, // Convert back to ObjectId
 							{
 								projection: {
 									email: 1,
@@ -232,7 +261,7 @@ export async function GET(request: Request) {
 						const alreadyRemindedToday = await db
 							.collection("habit_reminders")
 							.findOne({
-								userId: userHabits[0].userId,
+								userId: new ObjectId(userId),
 								date: today,
 							});
 
@@ -271,7 +300,7 @@ export async function GET(request: Request) {
 						const reminderDocs = userHabits.map((habit) => ({
 							jobId,
 							habitId: habit._id,
-							userId: habit.userId,
+							userId: new ObjectId(userId),
 							date: today,
 							hour: currentHour,
 							minute: currentMinute,
