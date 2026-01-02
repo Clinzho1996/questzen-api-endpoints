@@ -48,7 +48,12 @@ export async function GET(request: Request) {
 			.collection("habits")
 			.find({
 				isActive: true,
-				"settings.reminders.enabled": true,
+				$or: [
+					{ "settings.reminders.enabled": true },
+					{ "settings.reminders": { $exists: true } }, // If reminders object exists
+					{ "reminderSettings.enabled": true }, // Alternative field name
+					{ "reminders.enabled": true }, // Another possibility
+				],
 			})
 			.toArray();
 
