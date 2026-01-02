@@ -1,5 +1,6 @@
 // app/api/habits/route.ts - UPDATED WITH COLLABORATIVE PROPERTIES
 import { requireAuth } from "@/lib/auth";
+import { sendHabitReminderEmail } from "@/lib/habitReminder";
 import { getDatabase } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
@@ -478,7 +479,12 @@ export async function POST(request: NextRequest) {
 					timeOfDay,
 					timesPerWeek,
 					timesPerDay,
-					reminders,
+					reminders: {
+						enabled: true,
+						schedule: ["daily"], // or ['daily']
+						email: true,
+						push: false,
+					},
 					duration,
 				},
 				info: info || {},
@@ -513,6 +519,31 @@ export async function POST(request: NextRequest) {
 
 		const result = await db.collection("habits").insertOne(habitData);
 		const habitId = result.insertedId;
+
+		if (habitData.settings?.reminders?.enabled && currentUser.email) {
+			try {
+				await sendHabitReminderEmail(
+					currentUser.email,
+					currentUser.displayName,
+					{
+						name: habitData.name,
+						description: habitData.description,
+						category: habitData.category,
+						timeOfDay: habitData.settings?.timeOfDay || [],
+						streak: 0,
+						completionRate: 0,
+						habitId: habitId.toString(),
+						dueTime: new Date().toISOString(),
+						isCollaborative: habitData.isCollaborative,
+						collaboratorsCount: habitData.collaborators?.length || 0,
+					}
+				);
+				console.log(`✅ Test reminder sent for new habit: ${habitData.name}`);
+			} catch (emailError) {
+				console.error("Failed to send test reminder:", emailError);
+				// Don't fail the habit creation if email fails
+			}
+		}
 
 		// Create initial completion records for the week
 		const startOfWeek = new Date();
