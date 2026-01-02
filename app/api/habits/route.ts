@@ -545,7 +545,36 @@ export async function POST(request: NextRequest) {
 		const habitId = result.insertedId;
 
 		// Trigger reminder for both predefined and custom habits
-		if (habitData.settings?.reminders?.enabled && currentUser.email) {
+		// Instead of this:
+		// if (habitData.settings?.reminders?.enabled && currentUser.email) {
+
+		// Use this more comprehensive check:
+		const shouldSendReminder = () => {
+			// Check if user has email
+			if (!currentUser.email) return false;
+
+			// Check if reminders are enabled in settings
+			const reminders = habitData.settings?.reminders;
+
+			// Case 1: reminders is an object with enabled property
+			if (
+				reminders &&
+				typeof reminders === "object" &&
+				reminders.enabled === true
+			) {
+				return true;
+			}
+
+			// Case 2: reminders is an array (old format) - default to enabled
+			if (Array.isArray(reminders)) {
+				return true;
+			}
+
+			// Case 3: No reminders config found - default to enabled for new habits
+			return true;
+		};
+
+		if (shouldSendReminder()) {
 			try {
 				console.log("📧 Sending habit creation reminder...");
 
@@ -579,7 +608,7 @@ export async function POST(request: NextRequest) {
 		} else {
 			console.log("⚠️ Email reminder not triggered:", {
 				hasEmail: !!currentUser.email,
-				remindersEnabled: habitData.settings?.reminders?.enabled,
+				remindersEnabled: habitData.settings?.reminders,
 				habitName: habitName,
 			});
 		}
