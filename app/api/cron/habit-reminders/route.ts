@@ -44,8 +44,8 @@ export async function GET(request: Request) {
 			`⏰ ${jobId}: Processing for hour ${currentHour}, date ${today}`
 		);
 
-		// 1. Find all habits with reminders enabled AND active
-		const habits = await db
+		// 1. Get ALL habits with reminders enabled (regardless of userId)
+		const allHabits = await db
 			.collection("habits")
 			.find({
 				$and: [
@@ -69,24 +69,71 @@ export async function GET(request: Request) {
 				stats: 1,
 				isCollaborative: 1,
 				collaborators: 1,
+				isPredefined: 1,
 			})
 			.toArray();
 
 		console.log(
-			`📊 ${jobId}: Found ${habits.length} active habits with reminders enabled`
+			`📊 ${jobId}: Found ${allHabits.length} total habits with reminders enabled`
 		);
 
-		// Debug: Check first few habits
-		console.log(`🔍 ${jobId}: Sample habits:`);
-		habits.slice(0, 3).forEach((habit, i) => {
-			console.log(
-				`  ${i + 1}. "${habit.name}" - userId: ${
-					habit.userId
-				} (type: ${typeof habit.userId})`
-			);
+		// Debug: Show habit distribution
+		const habitsWithUserId = allHabits.filter((h) => h.userId).length;
+		const habitsWithoutUserId = allHabits.filter((h) => !h.userId).length;
+		const predefinedHabits = allHabits.filter((h) => h.isPredefined).length;
+		const userHabits = allHabits.filter((h) => !h.isPredefined).length;
+
+		console.log(`🔍 ${jobId}: Habit breakdown:`, {
+			withUserId: habitsWithUserId,
+			withoutUserId: habitsWithoutUserId,
+			predefined: predefinedHabits,
+			userHabits: userHabits,
 		});
 
-		// 2. Filter habits based on timeOfDay settings
+		// 2. Filter out predefined habits and habits without userId
+		const validUserHabits = allHabits.filter((habit) => {
+			// Skip predefined habits (these are templates)
+			if (habit.isPredefined) {
+				return false;
+			}
+
+			// Check if userId exists and is valid
+			if (!habit.userId) {
+				console.log(`⚠️ ${jobId}: Skipping habit "${habit.name}" - no userId`);
+				return false;
+			}
+
+			// Check if userId is a valid ObjectId or string
+			try {
+				if (habit.userId instanceof ObjectId) {
+					return true;
+				}
+
+				if (typeof habit.userId === "string") {
+					// Try to create ObjectId to validate
+					new ObjectId(habit.userId);
+					return true;
+				}
+
+				console.log(
+					`⚠️ ${jobId}: Skipping habit "${
+						habit.name
+					}" - invalid userId type: ${typeof habit.userId}`
+				);
+				return false;
+			} catch (error) {
+				console.log(
+					`⚠️ ${jobId}: Skipping habit "${habit.name}" - invalid userId format: ${habit.userId}`
+				);
+				return false;
+			}
+		});
+
+		console.log(
+			`👤 ${jobId}: ${validUserHabits.length} habits with valid userIds`
+		);
+
+		// 3. Filter by time window
 		const getTimeWindow = (hour: number): string => {
 			if (hour >= 6 && hour < 12) return "morning"; // 6am-11:59am
 			if (hour >= 12 && hour < 18) return "afternoon"; // 12pm-5:59pm
@@ -99,26 +146,16 @@ export async function GET(request: Request) {
 			`🕐 ${jobId}: Current time window: ${currentTimeWindow} (${currentHour}:00)`
 		);
 
-		const filteredHabits = habits.filter((habit) => {
-			// First check if habit has userId
-			if (!habit.userId) {
-				console.log(
-					`⚠️ ${jobId}: Habit "${habit.name}" has no userId, skipping`
-				);
-				return false;
-			}
-
+		const filteredHabits = validUserHabits.filter((habit) => {
 			const timeOfDay = habit.settings?.timeOfDay;
 			if (!timeOfDay || timeOfDay.length === 0) return true;
 
 			const timeArray = Array.isArray(timeOfDay) ? timeOfDay : [timeOfDay];
 
-			// Check for matches
 			return timeArray.some((time) => {
 				if (time === "any") return true;
 				if (time === currentTimeWindow) return true;
 
-				// Handle time ranges like "morning-afternoon"
 				if (time.includes("-")) {
 					const [start, end] = time.split("-");
 					const windows = ["morning", "afternoon", "evening", "night"];
@@ -142,11 +179,7 @@ export async function GET(request: Request) {
 		});
 
 		console.log(
-			`⏰ ${jobId}: After filtering: ${
-				filteredHabits.length
-			} habits need reminders (removed ${
-				habits.length - filteredHabits.length
-			} without userId or time mismatch)`
+			`⏰ ${jobId}: After time filtering: ${filteredHabits.length} habits need reminders`
 		);
 
 		if (filteredHabits.length === 0) {
@@ -154,15 +187,19 @@ export async function GET(request: Request) {
 				success: true,
 				jobId,
 				message: "No habits need reminders right now",
-				habitsChecked: habits.length,
-				filteredHabits: 0,
-				emailsSent: 0,
+				stats: {
+					totalHabits: allHabits.length,
+					validUserHabits: validUserHabits.length,
+					filteredHabits: 0,
+					currentTimeWindow: currentTimeWindow,
+					currentHour: currentHour,
+				},
 				executionTime: `${Date.now() - startTime}ms`,
 				timestamp: now.toISOString(),
 			});
 		}
 
-		// 3. Get all habit IDs to check for duplicates in one query
+		// 4. Check for duplicates
 		const habitIds = filteredHabits.map((h) => h._id);
 		const existingReminders = await db
 			.collection("habit_reminders")
@@ -195,7 +232,8 @@ export async function GET(request: Request) {
 				jobId,
 				message: "All filtered habits already reminded today",
 				stats: {
-					totalHabits: habits.length,
+					totalHabits: allHabits.length,
+					validUserHabits: validUserHabits.length,
 					filteredHabits: filteredHabits.length,
 					alreadyReminded: remindedHabitIds.size,
 					emailsSent: 0,
@@ -207,7 +245,7 @@ export async function GET(request: Request) {
 			});
 		}
 
-		// 4. Group habits by user for batch user lookup
+		// 5. Get all unique users in one query
 		const userIds = habitsToRemind
 			.map((h) => h.userId)
 			.filter(
@@ -216,12 +254,12 @@ export async function GET(request: Request) {
 
 		console.log(`👥 ${jobId}: Looking up ${userIds.length} unique users`);
 
-		// Convert userIds to ObjectIds for query
+		// Convert userIds to ObjectIds
 		const userObjectIds = userIds
 			.map((id) => {
 				try {
-					// Handle both ObjectId and string
-					return typeof id === "string" ? new ObjectId(id) : id;
+					if (id instanceof ObjectId) return id;
+					return new ObjectId(id);
 				} catch {
 					console.log(`⚠️ ${jobId}: Invalid user ID format: ${id}`);
 					return null;
@@ -229,7 +267,7 @@ export async function GET(request: Request) {
 			})
 			.filter((id) => id !== null);
 
-		// Get all users in one query
+		// Get users
 		const users = await db
 			.collection("users")
 			.find({
@@ -242,7 +280,6 @@ export async function GET(request: Request) {
 			})
 			.toArray();
 
-		// Create user map for quick lookup
 		const userMap = new Map();
 		users.forEach((user) => {
 			userMap.set(user._id.toString(), user);
@@ -250,9 +287,17 @@ export async function GET(request: Request) {
 
 		console.log(`👤 ${jobId}: Found ${users.length} users in database`);
 
-		// 5. Process habits in batches
+		// Debug: Show user mapping
+		console.log(`🔍 ${jobId}: User mapping:`, {
+			userIdsRequested: userIds.length,
+			usersFound: users.length,
+			missingUsers: userIds.length - users.length,
+		});
+
+		// 6. Process habits
 		let emailsSent = 0;
 		const failedHabits: string[] = [];
+		const successfulHabits: string[] = [];
 
 		for (let i = 0; i < habitsToRemind.length; i += 5) {
 			const batch = habitsToRemind.slice(i, i + 5);
@@ -260,41 +305,33 @@ export async function GET(request: Request) {
 			await Promise.all(
 				batch.map(async (habit) => {
 					try {
-						// Get user from map
-						const userIdStr = habit.userId.toString();
+						// Get user ID string for lookup
+						let userIdStr: string;
+						if (habit.userId instanceof ObjectId) {
+							userIdStr = habit.userId.toString();
+						} else if (typeof habit.userId === "string") {
+							userIdStr = habit.userId;
+						} else {
+							console.log(
+								`⚠️ ${jobId}: Invalid userId type for habit "${
+									habit.name
+								}": ${typeof habit.userId}`
+							);
+							return;
+						}
+
 						const user = userMap.get(userIdStr);
 
 						if (!user) {
 							console.log(
-								`⚠️ ${jobId}: No user found for habit "${habit.name}" (userId: ${userIdStr})`
+								`⚠️ ${jobId}: User ${userIdStr} not found for habit "${habit.name}"`
 							);
-
-							// Debug: Try to find the user directly
-							try {
-								const directUser = await db
-									.collection("users")
-									.findOne(
-										{ _id: new ObjectId(userIdStr) },
-										{ projection: { email: 1 } }
-									);
-								if (directUser) {
-									console.log(
-										`   Found user via direct query: ${directUser.email}`
-									);
-								} else {
-									console.log(
-										`   User ID ${userIdStr} not found in users collection`
-									);
-								}
-							} catch (err: any) {
-								console.log(`   Error querying user: ${err.message}`);
-							}
 							return;
 						}
 
 						if (!user.email) {
 							console.log(
-								`⚠️ ${jobId}: User ${user._id} has no email for habit "${habit.name}"`
+								`⚠️ ${jobId}: User ${userIdStr} has no email for habit "${habit.name}"`
 							);
 							return;
 						}
@@ -335,6 +372,7 @@ export async function GET(request: Request) {
 						});
 
 						emailsSent++;
+						successfulHabits.push(habit.name);
 						console.log(
 							`✅ ${jobId}: Sent reminder for "${habit.name}" to ${user.email}`
 						);
@@ -356,17 +394,20 @@ export async function GET(request: Request) {
 			jobId,
 			executionTime: `${executionTime}ms`,
 			stats: {
-				totalHabits: habits.length,
+				totalHabits: allHabits.length,
+				validUserHabits: validUserHabits.length,
 				filteredHabits: filteredHabits.length,
 				alreadyReminded: remindedHabitIds.size,
 				habitsToRemind: habitsToRemind.length,
 				uniqueUsers: userIds.length,
 				usersFound: users.length,
 				emailsSent: emailsSent,
+				successfulHabits: successfulHabits.length,
 				failed: failedHabits.length,
 				currentTimeWindow: currentTimeWindow,
 				currentHour: currentHour,
 			},
+			successfulHabits: successfulHabits.slice(0, 10),
 			failedDetails:
 				failedHabits.length > 0 ? failedHabits.slice(0, 5) : undefined,
 			nextRun: "Check GitHub Actions schedule",
