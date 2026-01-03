@@ -1,51 +1,41 @@
-// scripts/setup-paystack-plans.ts
+// scripts/setup-paystack-plans.ts - CORRECTED VERSION
+import { getPaystack } from "@/lib/paystack"; // Use your custom implementation
 import { config } from "dotenv";
 import { resolve } from "path";
-import Paystack from "paystack-api";
 
 // Load from .env.local
-const envPath = resolve(process.cwd(), ".env.local");
-config({ path: envPath });
-
-if (!process.env.PAYSTACK_SECRET_KEY) {
-	console.error("❌ PAYSTACK_SECRET_KEY not found in .env.local");
-	process.exit(1);
-}
-
-const paystack = new Paystack(process.env.PAYSTACK_SECRET_KEY!);
+config({ path: resolve(process.cwd(), ".env.local") });
 
 async function createPlans() {
 	try {
-		console.log("📝 Creating Monthly Plan...");
+		const paystack = getPaystack();
 
-		const monthlyPlan = await paystack.plan.create({
+		console.log(
+			"🔍 Using key:",
+			process.env.PAYSTACK_SECRET_KEY?.substring(0, 20) + "..."
+		);
+
+		console.log("📝 Creating Monthly Plan...");
+		const monthlyPlan = await paystack.createPlan({
 			name: "Premium Monthly",
-			amount: 250000,
+			amount: 250000, // ₦2,500
 			interval: "monthly",
 			currency: "NGN",
 			description: "Monthly premium subscription for QuestZen AI",
-			send_invoices: true,
-			send_sms: true,
 		});
 
-		console.log("✅ Monthly Plan created!");
-		console.log("   Plan Code:", monthlyPlan.data.plan_code);
+		console.log("✅ Monthly Plan created:", monthlyPlan.data.plan_code);
 
 		console.log("\n📝 Creating Yearly Plan...");
-
-		// FIXED: Changed "yearly" to "annually"
-		const yearlyPlan = await paystack.plan.create({
+		const yearlyPlan = await paystack.createPlan({
 			name: "Premium Yearly",
-			amount: 2800000,
-			interval: "annually", // Paystack uses "annually", not "yearly"
+			amount: 2800000, // ₦28,000
+			interval: "annually",
 			currency: "NGN",
 			description: "Yearly premium subscription for QuestZen AI",
-			send_invoices: true,
-			send_sms: true,
 		});
 
-		console.log("✅ Yearly Plan created!");
-		console.log("   Plan Code:", yearlyPlan.data.plan_code);
+		console.log("✅ Yearly Plan created:", yearlyPlan.data.plan_code);
 
 		console.log("\n📋 UPDATE YOUR .env.local FILE:");
 		console.log("=".repeat(50));
@@ -58,9 +48,6 @@ async function createPlans() {
 		console.log("=".repeat(50));
 	} catch (error: any) {
 		console.error("❌ Error:", error.message);
-		if (error.response?.data) {
-			console.error("Details:", error.response.data);
-		}
 	}
 }
 
