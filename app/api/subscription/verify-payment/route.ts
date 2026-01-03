@@ -46,7 +46,8 @@ export async function GET(request: NextRequest) {
 		// This is the key fix - get subscription code for recurring payments
 		const subscriptionCode =
 			verification.data.authorization?.subscription_code ||
-			verification.data.subscription?.subscription_code;
+			verification.data.subscription?.subscription_code ||
+			verification.data.metadata?.subscription_code;
 
 		// Update user subscription
 		await db.collection("users").updateOne(
@@ -66,6 +67,10 @@ export async function GET(request: NextRequest) {
 				$setOnInsert: {
 					premiumSince: new Date(),
 					subscriptionStartDate: new Date(),
+					nextBillingDate:
+						plan === "yearly"
+							? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year
+							: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
 				},
 			}
 		);
