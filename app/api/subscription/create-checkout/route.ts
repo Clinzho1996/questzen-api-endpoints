@@ -65,25 +65,52 @@ export async function POST(request: NextRequest) {
 			);
 		}
 
+		// Define isYearly here
+		const isYearly = plan === "yearly";
+
+		// Log the plan details
+		console.log("🎯 Creating checkout for:", {
+			email: userData.email,
+			plan,
+			isYearly,
+			planCode,
+			amount: isYearly ? "₦28,000" : "₦2,500",
+			customerCode: paystackCustomerCode,
+		});
+
 		const transaction = await paystack.initializeTransaction({
 			email: userData.email,
-			amount: plan === "monthly" ? 250000 : 2800000,
-			plan: planCode,
+			amount: isYearly ? 2800000 : 250000, // ₦28,000 or ₦2,500 in kobo
+			plan: planCode, // This is IMPORTANT for subscription payments
 			metadata: {
 				userId: user.userId,
 				plan,
 				customerCode: paystackCustomerCode,
+				product: "QuestZen AI Premium",
+				planType: isYearly ? "yearly" : "monthly",
 			},
 			callback_url: `${
 				process.env.FRONTEND_URL || "http://localhost:3001"
 			}/upgrade/callback`,
-			reference: `QUESTZEN_${Date.now()}_${user.userId.substring(0, 8)}`,
+			reference: `QUESTZEN_${Date.now()}_${user.userId.substring(
+				0,
+				8
+			)}_${plan}`,
+			channels: ["card", "bank", "bank_transfer"],
+		});
+
+		console.log("✅ Checkout created:", {
+			authorizationUrl: transaction.data.authorization_url,
+			reference: transaction.data.reference,
+			amount: isYearly ? "₦28,000" : "₦2,500",
 		});
 
 		return NextResponse.json({
 			authorizationUrl: transaction.data.authorization_url,
 			reference: transaction.data.reference,
 			message: "Payment initialized successfully",
+			plan,
+			isYearly,
 		});
 	} catch (error: any) {
 		console.error("Create checkout error:", error);
@@ -108,5 +135,9 @@ export async function GET() {
 		message: "Subscription checkout endpoint",
 		status: "active",
 		timestamp: new Date().toISOString(),
+		planCodes: {
+			monthly: PLAN_CODES.premium_monthly || "Not configured",
+			yearly: PLAN_CODES.premium_yearly || "Not configured",
+		},
 	});
 }

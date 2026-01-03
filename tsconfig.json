@@ -29,6 +29,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "scripts/fix-missing-subscriptions.js"  ],
   "exclude": ["node_modules"]
 }

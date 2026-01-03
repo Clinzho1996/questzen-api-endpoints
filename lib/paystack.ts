@@ -115,6 +115,49 @@ class PaystackAPI {
 		return this.request("GET", `/customer/${customerCode}`);
 	}
 
+	async createSubscription(data: {
+		customer: string;
+		plan: string;
+		authorization: string;
+		start_date?: string;
+	}): Promise<{ data: PaystackSubscription }> {
+		return this.request("POST", "/subscription", {
+			customer: data.customer,
+			plan: data.plan,
+			authorization: data.authorization,
+			start_date: data.start_date || new Date().toISOString(),
+		});
+	}
+
+	// Add this method to check customer authorizations:
+	async getCustomerAuthorizations(
+		customerCode: string
+	): Promise<{ data: any[] }> {
+		return this.request("GET", `/customer/${customerCode}/authorization`);
+	}
+
+	// Add this method to list all subscriptions:
+	async listSubscriptions(params?: {
+		perPage?: number;
+		page?: number;
+		customer?: string;
+		plan?: string;
+	}): Promise<{ data: PaystackSubscription[]; meta: any }> {
+		let url = "/subscription";
+		const queryParams = [];
+
+		if (params?.perPage) queryParams.push(`perPage=${params.perPage}`);
+		if (params?.page) queryParams.push(`page=${params.page}`);
+		if (params?.customer) queryParams.push(`customer=${params.customer}`);
+		if (params?.plan) queryParams.push(`plan=${params.plan}`);
+
+		if (queryParams.length > 0) {
+			url += `?${queryParams.join("&")}`;
+		}
+
+		return this.request("GET", url);
+	}
+
 	// Transaction methods
 	async initializeTransaction(data: {
 		email: string;
@@ -251,7 +294,6 @@ export async function disableSubscription(
 	const paystack = getPaystack();
 	return paystack.disableSubscription(subscriptionCode, token);
 }
-
 
 export async function getSubscription(
 	subscriptionCode: string
