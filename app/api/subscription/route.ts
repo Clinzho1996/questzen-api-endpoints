@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
 						nextPaymentDate,
 						amount: plan?.amount || 0,
 						currency: "NGN",
-						interval: getIntervalFromPlan(plan?.interval),
+						interval: getIntervalFromPlan(plan?.interval, plan?.plan_code),
 						startDate: new Date(paystackData.createdAt).toISOString(),
 						cancelledAt: cancelledAt ?? userData.cancelledAt?.toISOString(),
 						endsAt: endsAt ?? userData.subscriptionEndDate?.toISOString(),
@@ -139,22 +139,28 @@ export async function GET(request: NextRequest) {
 			subscriptionDetails = userData.subscriptionDetails as SubscriptionDetails;
 		}
 
+		// Update the fallback logic section:
 		if (!subscriptionDetails && tier === "premium") {
 			const startDate =
 				userData.premiumSince ??
 				userData.subscriptionStartDate ??
 				userData.createdAt;
 
+			// Get plan interval from user data
+			const plan = userData.plan || "monthly";
+			const interval = plan === "yearly" ? "yearly" : "monthly";
+			const amount = plan === "yearly" ? 28000 : 2500;
+
 			subscriptionDetails = {
-				planCode: "premium_monthly",
-				planName: "Premium Plan",
+				planCode: plan === "yearly" ? "premium_yearly" : "premium_monthly",
+				planName: plan === "yearly" ? "Premium Yearly" : "Premium Monthly",
 				status: userData.subscriptionStatus || "active",
 				nextPaymentDate:
 					userData.nextBillingDate?.toISOString() ??
-					calculateNextPaymentDate(startDate),
-				amount: 2500,
+					calculateNextPaymentDate(startDate, interval),
+				amount,
 				currency: "NGN",
-				interval: "monthly",
+				interval,
 				startDate: startDate.toISOString(),
 				cancelledAt: userData.cancelledAt?.toISOString(),
 				endsAt: userData.subscriptionEndDate?.toISOString(),
@@ -213,13 +219,40 @@ function mapPaystackStatus(
 	}
 }
 
-function getIntervalFromPlan(interval?: string): "monthly" | "yearly" {
-	if (!interval) return "monthly";
-	return interval.toLowerCase().includes("year") ? "yearly" : "monthly";
+function getIntervalFromPlan(
+	interval?: string,
+	planCode?: string
+): "monthly" | "yearly" {
+	if (!interval) {
+		// Check plan code if interval is not provided
+		if (planCode?.includes("yearly") || planCode?.includes("annual")) {
+			return "yearly";
+		}
+		return "monthly";
+	}
+
+	// Clean and check the interval string
+	const cleanInterval = interval.toLowerCase();
+	if (
+		cleanInterval.includes("year") ||
+		cleanInterval.includes("annual") ||
+		cleanInterval.includes("annually")
+	) {
+		return "yearly";
+	}
+	return "monthly";
 }
 
-function calculateNextPaymentDate(startDate: Date): string {
+// Replace the calculateNextPaymentDate function:
+function calculateNextPaymentDate(
+	startDate: Date,
+	interval?: "monthly" | "yearly"
+): string {
 	const date = new Date(startDate);
-	date.setDate(date.getDate() + 30);
+	if (interval === "yearly") {
+		date.setFullYear(date.getFullYear() + 1);
+	} else {
+		date.setDate(date.getDate() + 30); // Monthly
+	}
 	return date.toISOString();
 }
