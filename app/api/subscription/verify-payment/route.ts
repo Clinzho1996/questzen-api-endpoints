@@ -42,13 +42,32 @@ export async function GET(request: NextRequest) {
 		const plan = verification.data.metadata?.plan || "monthly";
 		const subscriptionTier = "premium";
 
+		console.log(
+			"Full Paystack verification response:",
+			JSON.stringify(verification.data, null, 2)
+		);
 		// Extract subscription code from the response
 		// This is the key fix - get subscription code for recurring payments
 		const subscriptionCode =
-			verification.data.authorization?.subscription_code ||
+			verification.data.subscription?.subscription_code || // Most likely here
 			verification.data.subscription?.subscription_code ||
-			verification.data.metadata?.subscription_code;
+			verification.data.authorization?.subscription_code ||
+			verification.data.data?.subscription?.subscription_code || // Nested structure
+			verification.data.metadata?.subscription_code; // In metadata
 
+		console.log("Extracted subscription code:", subscriptionCode);
+		console.log("Response subscription data:", verification.data.subscription);
+		console.log(
+			"Response authorization data:",
+			verification.data.authorization
+		);
+
+		const planInterval =
+			verification.data.plan?.interval ||
+			verification.data.subscription?.plan?.interval ||
+			"monthly";
+
+		console.log("Plan interval:", planInterval);
 		// Update user subscription
 		await db.collection("users").updateOne(
 			{ _id: new ObjectId(user.userId) },
