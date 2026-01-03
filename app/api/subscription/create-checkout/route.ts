@@ -1,4 +1,4 @@
-// app/api/subscription/create-checkout/route.ts
+// app/api/subscription/create-checkout/route.ts - UPDATED
 export const runtime = "nodejs"; // Use Edge runtime for better compatibility
 
 import { requireAuth } from "@/lib/auth";
@@ -78,6 +78,8 @@ export async function POST(request: NextRequest) {
 			customerCode: paystackCustomerCode,
 		});
 
+		// IMPORTANT: Use correct channel names for Paystack
+		// Available channels: "card", "bank", "ussd", "qr", "mobile_money", "bank_transfer"
 		const transaction = await paystack.initializeTransaction({
 			email: userData.email,
 			amount: isYearly ? 2800000 : 250000, // ₦28,000 or ₦2,500 in kobo
@@ -96,13 +98,15 @@ export async function POST(request: NextRequest) {
 				0,
 				8
 			)}_${plan}`,
-			channels: ["card", "bank", "bank_transfer"],
+			// FIXED: Use only valid Paystack channel names
+			channels: ["card", "bank"], // "bank" includes bank transfer
 		});
 
 		console.log("✅ Checkout created:", {
 			authorizationUrl: transaction.data.authorization_url,
 			reference: transaction.data.reference,
 			amount: isYearly ? "₦28,000" : "₦2,500",
+			channels: ["card", "bank"], // Show what channels we're using
 		});
 
 		return NextResponse.json({
@@ -111,6 +115,7 @@ export async function POST(request: NextRequest) {
 			message: "Payment initialized successfully",
 			plan,
 			isYearly,
+			channels: ["card", "bank"], // Return for frontend info
 		});
 	} catch (error: any) {
 		console.error("Create checkout error:", error);
@@ -139,5 +144,6 @@ export async function GET() {
 			monthly: PLAN_CODES.premium_monthly || "Not configured",
 			yearly: PLAN_CODES.premium_yearly || "Not configured",
 		},
+		supportedChannels: ["card", "bank", "ussd", "qr", "mobile_money"],
 	});
 }
